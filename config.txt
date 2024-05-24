@@ -1,6 +1,6 @@
 [LOGIN]
-email = joaop.rosa01@gmail.com
-senha = uuf&by*96XfmaMf
+email = 
+senha = 
 
 
 [AJUSTES]
