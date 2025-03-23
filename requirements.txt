@@ -1,0 +1,4 @@
+iqoptionapi
+configobj
+tabulate
+colorama

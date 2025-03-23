@@ -214,7 +214,7 @@ def compra(ativo,valor_entrada,direcao,exp,tipo):
 
                         elif resultado == 0:
                             if i == 0:
-                                print(yellow +'\n>> Resultado: EMPATE \n'+white+'\>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
+                                print(yellow +'\n>> Resultado: EMPATE \n'+white+'>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
                             
                             if i >= 1:
                                 print(yellow+'\n>> Resultado: EMPATE no gale',str(i),'\n'+white+'>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
