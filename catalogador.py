@@ -77,19 +77,35 @@ def obter_resultados(API, pares):
     timeframe = 60
     qnt_velas = 120
     qnt_velas_m5 = 146
-
     estrategias = ['mhi', 'torres', 'mhi_m5']
     resultados = []
 
     for estrategia in estrategias:
         for par in pares:
-            velas = API.get_candles(par, timeframe, qnt_velas if estrategia != 'mhi_m5' else qnt_velas_m5, time.time())
-            if velas is not None:
+            tentativas = 0
+            velas = None
+
+            while tentativas < 5 and not velas:
+                velas = API.get_candles(par, timeframe, qnt_velas if estrategia != 'mhi_m5' else qnt_velas_m5, time.time())
+                
+                if not velas:
+                    print(f"⚠️ Tentativa {tentativas+1}: falha ao obter velas de {par}. Reconectando em 2 segundos...")
+                    API.connect()
+                    API.change_balance('PRACTICE')  # Certifique-se de reconectar à conta correta
+                    time.sleep(2)  # Aguarda 2 segundos antes de tentar novamente
+                    tentativas += 1
+            
+            if velas:
                 resultados_estrategia = analisar_velas(velas, estrategia)
                 percentuais = calcular_percentuais(resultados_estrategia)
                 resultados.append([estrategia.upper(), par] + percentuais)
-    
+                time.sleep(1)  # Pequeno intervalo após sucesso para evitar bloqueio
+            else:
+                print(f"❌ Não foi possível obter os dados do ativo {par} após múltiplas tentativas.")
+            
     return resultados
+
+
 
 def catag(API):
     config = ConfigObj('config.txt')
@@ -105,8 +121,21 @@ def catag(API):
     return resultados_ordenados, linha
 
 # Exemplo de uso
+# Exemplo de uso corrigido
 if __name__ == "__main__":
-    API = IQ_Option("seu_email", "sua_senha")
+    config = ConfigObj('config.txt')
+    API = IQ_Option(config['LOGIN']['email'], config['LOGIN']['senha'])
+
+    conectado, erro = API.connect()
+    if conectado:
+        print("✅ Conexão com IQ Option realizada com sucesso!")
+    else:
+        print(f"❌ Falha ao conectar: {erro}")
+        exit()
+
+    # Adicione esta linha: Selecionar conta (PRACTICE = Demo, REAL = Real)
+    API.change_balance('PRACTICE')  # use 'REAL' para conta real
+
     catalog, linha = catag(API)
     headers = ["Estratégia", "Par", "Win%", "Gale1%", "Gale2%"]
-    print(tabulate(catalog, headers=headers))
+    print(tabulate(catalog, headers=headers, tablefmt="pretty"))

@@ -1,6 +1,6 @@
 [LOGIN]
-email = 
-senha = 
+email = leonardorfragoso2@gmail.com
+senha = Marleyj@23
 
 
 [AJUSTES]
