@@ -160,7 +160,6 @@ def payout(par):
 
     return binary, turbo, digital
 
-### Função abrir ordem e checar resultado ###
 def compra(ativo, valor_entrada, direcao, exp, tipo):
     global stop, lucro_total, nivel_soros, niveis_soros, valor_soros, lucro_op_atual
 
@@ -185,24 +184,20 @@ def compra(ativo, valor_entrada, direcao, exp, tipo):
                 check, id = API.buy(entrada, ativo, direcao, exp)
 
             if check:
-                if i == 0:
-                    print(yellow + '\n>>' + white + ' Ordem aberta \n' + yellow + '>>' + white + ' Par:', ativo,
-                          '\n' + yellow + '>> ' + white + 'Timeframe:', exp,
-                          '\n' + yellow + '>>' + white + ' Entrada de:', cifrao, entrada)
-                else:
-                    print(yellow + '\n>>' + white + f' Ordem aberta para gale {i}\n' +
-                          yellow + '>>' + white + ' Par:', ativo,
-                          '\n' + yellow + '>> ' + white + 'Timeframe:', exp,
-                          '\n' + yellow + '>>' + white + ' Entrada de:', cifrao, entrada)
+                print(f"\n>> Ordem aberta{' para gale ' + str(i) if i > 0 else ''}")
+                print(f">> Par: {ativo}")
+                print(f">> Timeframe: {exp}")
+                print(f">> Entrada de: {cifrao}{entrada}")
 
                 while True:
                     time.sleep(0.1)
+
                     if tipo == 'digital':
                         status, resultado = API.check_win_digital_v2(id)
                     else:
-                        # Fallback para check_win_v3 ou v2
                         if hasattr(API, 'check_win_v3'):
-                            status, resultado = API.check_win_v3(id)
+                            resultado = API.check_win_v3(id)
+                            status = True
                         else:
                             status, resultado = API.check_win_v2(id)
 
@@ -226,7 +221,7 @@ def compra(ativo, valor_entrada, direcao, exp, tipo):
                         break
 
                 if resultado > 0:
-                    break  # Não continua para próximos gales
+                    break
 
             else:
                 print(red + f'Erro na abertura da ordem, ID: {id}, Ativo: {ativo}')
@@ -239,7 +234,6 @@ def compra(ativo, valor_entrada, direcao, exp, tipo):
             valor_soros = 0
             nivel_soros = 0
             lucro_op_atual = 0
-
 
 ### Fução que busca hora da corretora ###
 def horario():
