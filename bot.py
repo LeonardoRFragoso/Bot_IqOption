@@ -161,17 +161,15 @@ def payout(par):
     return binary, turbo, digital
 
 ### Função abrir ordem e checar resultado ###
-def compra(ativo,valor_entrada,direcao,exp,tipo):
-    global stop,lucro_total, nivel_soros, niveis_soros, valor_soros, lucro_op_atual
+def compra(ativo, valor_entrada, direcao, exp, tipo):
+    global stop, lucro_total, nivel_soros, niveis_soros, valor_soros, lucro_op_atual
 
     if soros:
         if nivel_soros == 0:
             entrada = valor_entrada
-
-        if nivel_soros >=1 and valor_soros > 0 and nivel_soros <= niveis_soros:
+        elif nivel_soros >= 1 and valor_soros > 0 and nivel_soros <= niveis_soros:
             entrada = valor_entrada + valor_soros
-
-        if nivel_soros > niveis_soros:
+        elif nivel_soros > niveis_soros:
             lucro_op_atual = 0
             valor_soros = 0
             entrada = valor_entrada
@@ -180,80 +178,68 @@ def compra(ativo,valor_entrada,direcao,exp,tipo):
         entrada = valor_entrada
 
     for i in range(martingale + 1):
-
-        if stop == True:
-        
+        if stop:
             if tipo == 'digital':
-                check, id = API.buy_digital_spot_v2(ativo,entrada,direcao,exp)
+                check, id = API.buy_digital_spot_v2(ativo, entrada, direcao, exp)
             else:
-                check, id = API.buy(entrada,ativo,direcao,exp)
-
+                check, id = API.buy(entrada, ativo, direcao, exp)
 
             if check:
-                if i == 0: 
-                    print(yellow + '\n>>'+white+' Ordem aberta \n'+yellow+'>>'+white+' Par:',ativo,'\n'+yellow+'>> '+white+'Timeframe:',exp,'\n'+yellow+'>>'+white+' Entrada de:',cifrao,entrada)
-                if i >= 1:
-                    print(yellow + '\n>>'+white+' Ordem aberta para gale',str(i),'\n'+yellow+'>>'+white+' Par:',ativo,'\n'+yellow+'>> '+white+'Timeframe:',exp,'\n'+yellow+'>>'+white+' Entrada de:',cifrao,entrada)
-
+                if i == 0:
+                    print(yellow + '\n>>' + white + ' Ordem aberta \n' + yellow + '>>' + white + ' Par:', ativo,
+                          '\n' + yellow + '>> ' + white + 'Timeframe:', exp,
+                          '\n' + yellow + '>>' + white + ' Entrada de:', cifrao, entrada)
+                else:
+                    print(yellow + '\n>>' + white + f' Ordem aberta para gale {i}\n' +
+                          yellow + '>>' + white + ' Par:', ativo,
+                          '\n' + yellow + '>> ' + white + 'Timeframe:', exp,
+                          '\n' + yellow + '>>' + white + ' Entrada de:', cifrao, entrada)
 
                 while True:
                     time.sleep(0.1)
-                    status , resultado = API.check_win_digital_v2(id) if tipo == 'digital' else API.check_win_v4(id)
+                    if tipo == 'digital':
+                        status, resultado = API.check_win_digital_v2(id)
+                    else:
+                        # Fallback para check_win_v3 ou v2
+                        if hasattr(API, 'check_win_v3'):
+                            status, resultado = API.check_win_v3(id)
+                        else:
+                            status, resultado = API.check_win_v2(id)
 
                     if status:
-
-                        lucro_total += round(resultado,2)
-                        valor_soros += round(resultado,2)
-                        lucro_op_atual += round(resultado,2)
+                        resultado = round(resultado, 2)
+                        lucro_total += resultado
+                        valor_soros += resultado
+                        lucro_op_atual += resultado
 
                         if resultado > 0:
-                            if i == 0:
-                                print(green+ '\n>> Resultado: WIN \n'+white+'>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
-                            if i >= 1:
-                                print(green+ '\n>> Resultado: WIN no gale',str(i)+white+'\n>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
-
+                            print(green + f'\n>> Resultado: WIN{" no gale " + str(i) if i > 0 else ""}')
                         elif resultado == 0:
-                            if i == 0:
-                                print(yellow +'\n>> Resultado: EMPATE \n'+white+'>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
-                            
-                            if i >= 1:
-                                print(yellow+'\n>> Resultado: EMPATE no gale',str(i),'\n'+white+'>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
-                            
-                            if i+1 <= martingale:
-                                gale = float(entrada)                   
-                                entrada = round(abs(gale), 2)
-
+                            print(yellow + f'\n>> Resultado: EMPATE{" no gale " + str(i) if i > 0 else ""}')
                         else:
-                            if i == 0:
-                                print(red+'\n>> Resultado: LOSS \n'+white+'>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
-                            if i >= 1:
-                                print(red+'\n>> Resultado: LOSS no gale',str(i), '\n'+white+'>> Lucro:', round(resultado,2), '\n>> Par:', ativo, '\n>> Lucro total: ', round(lucro_total,2))
-                                
-                            if i+1 <= martingale:
-                                
-                                gale = float(entrada) * float(fator_mg)                           
-                                entrada = round(abs(gale), 2)
+                            print(red + f'\n>> Resultado: LOSS{" no gale " + str(i) if i > 0 else ""}')
 
+                        print(white + f">> Lucro: {resultado}")
+                        print(white + f">> Par: {ativo}")
+                        print(white + f">> Lucro total: {lucro_total}")
                         check_stop()
-
                         break
 
-
                 if resultado > 0:
-                    break
+                    break  # Não continua para próximos gales
 
             else:
-                print('erro na abertura da ordem,', id,ativo)
+                print(red + f'Erro na abertura da ordem, ID: {id}, Ativo: {ativo}')
 
     if soros:
         if lucro_op_atual > 0:
             nivel_soros += 1
             lucro_op_atual = 0
-        
         else:
             valor_soros = 0
             nivel_soros = 0
             lucro_op_atual = 0
+
 
 ### Fução que busca hora da corretora ###
 def horario():

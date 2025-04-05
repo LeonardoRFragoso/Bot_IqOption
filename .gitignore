@@ -1,0 +1,34 @@
+# Ambiente virtual
+venv/
+.env/
+*.env
+
+# Arquivos de configuração
+config.txt
+*.ini
+
+# Arquivos temporários e caches
+__pycache__/
+*.py[cod]
+*.log
+*.sqlite
+*.db
+
+# Jupyter / VSCode / PyCharm etc
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# Resultados, exportações, relatórios
+*.csv
+*.xlsx
+*.pdf
+*.json
+
+# Logs do projeto (se forem criados no futuro)
+logs/
+*.log
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
