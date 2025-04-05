@@ -178,6 +178,10 @@ def compra(ativo, valor_entrada, direcao, exp, tipo):
 
     for i in range(martingale + 1):
         if stop:
+            # Aplica Martingale antes da nova entrada (exceto na primeira)
+            if i > 0:
+                entrada = round(entrada * fator_mg, 2)
+
             if tipo == 'digital':
                 check, id = API.buy_digital_spot_v2(ativo, entrada, direcao, exp)
             else:
@@ -234,6 +238,7 @@ def compra(ativo, valor_entrada, direcao, exp, tipo):
             valor_soros = 0
             nivel_soros = 0
             lucro_op_atual = 0
+
 
 ### Fução que busca hora da corretora ###
 def horario():
