@@ -1,21 +1,19 @@
 [LOGIN]
-email = leonardorfragoso2@gmail.com
+email = vaniasayonara@gmail.com
 senha = Marleyj@23
-
-
 [AJUSTES]
-valor_entrada = 3
 tipo = automatico
-stop_win = 40
-stop_loss = 60
+valor_entrada = 8.0
+stop_win = 50.0
+stop_loss = 70.0
 analise_medias = N
-velas_medias = 10
-
+velas_medias = 3
+estrategia = MHI
+ativo = ""
 [MARTINGALE]
-usar_martingale = S
-niveis_martingale = 2
-fator_martingale = 2.2
-
+usar = S
+niveis = 1
+fator = 2.0
 [SOROS]
-usar_soros = S
-niveis_soros = 1
+usar = N
+niveis = 0
