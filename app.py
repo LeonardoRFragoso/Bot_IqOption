@@ -15,8 +15,31 @@ import logging
 from catalogador import catag, obter_pares_abertos, obter_resultados
 
 # Suprimir avisos específicos do Streamlit sobre ScriptRunContext
-logging.getLogger('streamlit.runtime.scriptrunner.script_runner').setLevel(logging.ERROR)
+logging.getLogger('streamlit.runtime.scriptrunner.script_runner').setLevel(logging.CRITICAL)
+logging.getLogger('streamlit').setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
+warnings.filterwarnings("ignore", message=".*Thread.*")
+
+# Configurar um logger personalizado para o bot
+bot_logger = logging.getLogger('bot_iqoption')
+bot_logger.setLevel(logging.INFO)
+
+# Handler para console
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+bot_logger.addHandler(console_handler)
+
+# Handler para arquivo
+try:
+    file_handler = logging.FileHandler('bot_log.txt')
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(file_formatter)
+    bot_logger.addHandler(file_handler)
+except:
+    pass  # Se não conseguir criar o arquivo de log, apenas continue
 
 # Configuração da página
 st.set_page_config(
@@ -297,18 +320,21 @@ def log_message(msg):
         st.session_state.log = []
     st.session_state.log.append(f"{timestamp} - {msg}")
     
+    # Usar o logger personalizado para evitar avisos de ScriptRunContext
+    bot_logger.info(msg)
+    
     # Para comunicação entre threads
     if "bot_messages" in st.session_state:
         st.session_state.bot_messages.append(f"{timestamp} - {msg}")
         
         # Atualiza contadores baseados na mensagem
-        if "Resultado: WIN" in msg:
+        if "RESULTADO: WIN" in msg:
             st.session_state.bot_wins += 1
             st.session_state.bot_total_ops += 1
-        elif "Resultado: LOSS" in msg:
+        elif "RESULTADO: LOSS" in msg:
             st.session_state.bot_losses += 1
             st.session_state.bot_total_ops += 1
-        elif "Resultado: EMPATE" in msg:
+        elif "RESULTADO: EMPATE" in msg:
             st.session_state.bot_empates += 1
             st.session_state.bot_total_ops += 1
         
@@ -772,97 +798,175 @@ def run_bot(api):
             if condicoes_atendidas:
                 log_message(f"✅ CONDIÇÕES ATENDIDAS: Realizando entrada {direcao} em {ativo}")
                 
-                # Simulação de entrada (em um bot real, aqui seria a chamada para a API)
-                # api.buy(valor_atual, ativo, direcao, 1)  # 1 = expiração em 1 minuto
+                # Implementação da função de compra baseada no script original
+                entrada_valor = valor_atual
                 
-                log_message(f"🔄 ENTRADA REALIZADA: {ativo}, Direção: {direcao}, Valor: {valor_atual:.2f}")
+                # Lógica de Soros (baseada no script original)
+                if usar_soros:
+                    if nivel_atual_soros == 0:
+                        entrada_valor = valor_atual
+                    elif nivel_atual_soros >= 1 and nivel_atual_soros <= niveis_soros:
+                        # Usar o valor acumulado com o lucro anterior
+                        entrada_valor = valor_atual  # Já foi ajustado após o WIN anterior
+                    elif nivel_atual_soros > niveis_soros:
+                        # Reset do soros após atingir o nível máximo
+                        nivel_atual_soros = 0
+                        entrada_valor = valor_entrada
+                else:
+                    entrada_valor = valor_atual
                 
-                # Simulação do resultado (aleatório para exemplo)
-                resultado = np.random.choice(['WIN', 'LOSS', 'EMPATE'], p=[0.6, 0.35, 0.05])
+                # Realizar a compra (com suporte a martingale)
+                resultado = None
+                valor_compra = entrada_valor
                 
-                # Registra o timestamp da operação
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                
-                if resultado == 'WIN':
-                    ganho = valor_atual * 0.8  # Simulando 80% de retorno
-                    lucro_atual += ganho
-                    st.session_state.bot_wins += 1
-                    st.session_state.bot_lucro_total += ganho
-                    log_message(f"✅ RESULTADO: WIN +{ganho:.2f} | Lucro Total: {lucro_atual:.2f}")
+                for i in range(nivel_atual_martingale + 1):
+                    if i > 0:
+                        # Aplicar martingale
+                        valor_compra = round(valor_compra * fator_martingale, 2)
+                        log_message(f"🔄 MARTINGALE {i}: Aumentando valor para {valor_compra:.2f}")
                     
-                    # Registra a operação no histórico
-                    st.session_state.bot_historico.append({
-                        'timestamp': timestamp,
-                        'resultado': 'WIN',
-                        'valor': valor_atual,
-                        'lucro': ganho,
-                        'lucro_acumulado': lucro_atual,
-                        'estrategia': estrategia,
-                        'ativo': ativo,
-                        'direcao': direcao
-                    })
+                    # Executar a compra na API
+                    try:
+                        log_message(f"🔄 ENTRADA REALIZADA: {ativo}, Direção: {direcao}, Valor: {valor_compra:.2f}")
+                        
+                        if tipo.lower() == 'digital':
+                            status, id = api.buy_digital_spot_v2(ativo, valor_compra, direcao, 1)  # 1 minuto de expiração
+                        else:
+                            status, id = api.buy(valor_compra, ativo, direcao, 1)  # 1 minuto de expiração
+                        
+                        if status:
+                            log_message(f"✅ Ordem aberta com sucesso{' para gale ' + str(i) if i > 0 else ''}")
+                            
+                            # Aguardar resultado
+                            tempo_espera = 0
+                            while tempo_espera < 60:  # Esperar até 60 segundos pelo resultado
+                                time.sleep(1)
+                                tempo_espera += 1
+                                
+                                try:
+                                    if tipo.lower() == 'digital':
+                                        status_ordem, resultado_valor = api.check_win_digital_v2(id)
+                                    else:
+                                        resultado_valor = api.check_win_v3(id)
+                                        status_ordem = True
+                                    
+                                    if status_ordem:
+                                        # Registra o timestamp da operação
+                                        timestamp = datetime.now().strftime("%H:%M:%S")
+                                        resultado_valor = round(resultado_valor, 2)
+                                        
+                                        if resultado_valor > 0:
+                                            # WIN
+                                            resultado = 'WIN'
+                                            lucro_atual += resultado_valor
+                                            st.session_state.bot_wins += 1
+                                            st.session_state.bot_lucro_total += resultado_valor
+                                            log_message(f"✅ RESULTADO: WIN +{resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
+                                            
+                                            # Registra a operação no histórico
+                                            st.session_state.bot_historico.append({
+                                                'timestamp': timestamp,
+                                                'resultado': 'WIN',
+                                                'valor': valor_compra,
+                                                'lucro': resultado_valor,
+                                                'lucro_acumulado': lucro_atual,
+                                                'estrategia': estrategia,
+                                                'ativo': ativo,
+                                                'direcao': direcao,
+                                                'martingale': i if i > 0 else None
+                                            })
+                                            
+                                            # Reset martingale
+                                            nivel_atual_martingale = 0
+                                            valor_atual = valor_entrada
+                                            
+                                            # Lógica de Soros
+                                            if usar_soros and nivel_atual_soros < niveis_soros:
+                                                nivel_atual_soros += 1
+                                                valor_atual = valor_atual + resultado_valor
+                                                log_message(f"🔄 SOROS: Próxima entrada com {valor_atual:.2f}")
+                                            else:
+                                                nivel_atual_soros = 0
+                                                valor_atual = valor_entrada
+                                            
+                                            break  # Sai do loop de martingale após um WIN
+                                            
+                                        elif resultado_valor == 0:
+                                            # EMPATE
+                                            resultado = 'EMPATE'
+                                            st.session_state.bot_empates += 1
+                                            log_message(f"🔄 RESULTADO: EMPATE{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
+                                            
+                                            # Registra a operação no histórico
+                                            st.session_state.bot_historico.append({
+                                                'timestamp': timestamp,
+                                                'resultado': 'EMPATE',
+                                                'valor': valor_compra,
+                                                'lucro': 0,
+                                                'lucro_acumulado': lucro_atual,
+                                                'estrategia': estrategia,
+                                                'ativo': ativo,
+                                                'direcao': direcao,
+                                                'martingale': i if i > 0 else None
+                                            })
+                                            
+                                            break  # Não continua o martingale em caso de empate
+                                            
+                                        else:
+                                            # LOSS
+                                            resultado = 'LOSS'
+                                            lucro_atual += resultado_valor  # Resultado negativo
+                                            st.session_state.bot_losses += 1
+                                            st.session_state.bot_lucro_total += resultado_valor
+                                            log_message(f"❌ RESULTADO: LOSS {resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
+                                            
+                                            # Registra a operação no histórico
+                                            st.session_state.bot_historico.append({
+                                                'timestamp': timestamp,
+                                                'resultado': 'LOSS',
+                                                'valor': valor_compra,
+                                                'lucro': resultado_valor,
+                                                'lucro_acumulado': lucro_atual,
+                                                'estrategia': estrategia,
+                                                'ativo': ativo,
+                                                'direcao': direcao,
+                                                'martingale': i if i > 0 else None
+                                            })
+                                            
+                                            # Reset soros
+                                            nivel_atual_soros = 0
+                                            
+                                            # Continua para o próximo nível de martingale se não for o último
+                                            if i < nivel_atual_martingale:
+                                                break  # Sai do loop de espera para ir para o próximo martingale
+                                        
+                                        st.session_state.bot_total_ops += 1
+                                        break  # Sai do loop de espera após obter o resultado
+                                
+                                except Exception as e:
+                                    log_message(f"❌ Erro ao verificar resultado: {str(e)}")
+                                    if tempo_espera >= 59:  # Se estiver no último segundo de espera
+                                        break
+                        else:
+                            log_message(f"❌ Erro na abertura da ordem: {id}")
+                            break  # Sai do loop de martingale em caso de erro
                     
-                    # Reset martingale
+                    except Exception as e:
+                        log_message(f"❌ Erro ao realizar entrada: {str(e)}")
+                        break  # Sai do loop de martingale em caso de erro
+                    
+                    # Se teve WIN, sai do loop de martingale
+                    if resultado == 'WIN' or resultado == 'EMPATE':
+                        break
+                
+                # Atualiza o nível de martingale para a próxima operação
+                if resultado == 'LOSS' and usar_martingale and nivel_atual_martingale < niveis_martingale:
+                    nivel_atual_martingale += 1
+                    valor_atual = valor_atual * fator_martingale
+                    log_message(f"🔄 MARTINGALE: Próxima entrada será com {valor_atual:.2f}")
+                elif resultado == 'LOSS':
                     nivel_atual_martingale = 0
                     valor_atual = valor_entrada
-                    
-                    # Lógica de Soros
-                    if usar_soros and nivel_atual_soros < niveis_soros:
-                        nivel_atual_soros += 1
-                        valor_atual = valor_atual + ganho
-                        log_message(f"🔄 SOROS: Próxima entrada com {valor_atual:.2f}")
-                    else:
-                        nivel_atual_soros = 0
-                        valor_atual = valor_entrada
-                    
-                elif resultado == 'LOSS':
-                    perda = valor_atual
-                    lucro_atual -= perda
-                    st.session_state.bot_losses += 1
-                    st.session_state.bot_lucro_total -= perda
-                    log_message(f"❌ RESULTADO: LOSS -{perda:.2f} | Lucro Total: {lucro_atual:.2f}")
-                    
-                    # Registra a operação no histórico
-                    st.session_state.bot_historico.append({
-                        'timestamp': timestamp,
-                        'resultado': 'LOSS',
-                        'valor': valor_atual,
-                        'lucro': -perda,
-                        'lucro_acumulado': lucro_atual,
-                        'estrategia': estrategia,
-                        'ativo': ativo,
-                        'direcao': direcao
-                    })
-                    
-                    # Reset soros
-                    nivel_atual_soros = 0
-                    
-                    # Lógica de Martingale
-                    if usar_martingale and nivel_atual_martingale < niveis_martingale:
-                        nivel_atual_martingale += 1
-                        valor_atual = valor_atual * fator_martingale
-                        log_message(f"🔄 MARTINGALE: Próxima entrada com {valor_atual:.2f}")
-                    else:
-                        nivel_atual_martingale = 0
-                        valor_atual = valor_entrada
-                    
-                else:  # EMPATE
-                    st.session_state.bot_empates += 1
-                    log_message(f"🔄 RESULTADO: EMPATE | Lucro Total: {lucro_atual:.2f}")
-                    
-                    # Registra a operação no histórico
-                    st.session_state.bot_historico.append({
-                        'timestamp': timestamp,
-                        'resultado': 'EMPATE',
-                        'valor': valor_atual,
-                        'lucro': 0,
-                        'lucro_acumulado': lucro_atual,
-                        'estrategia': estrategia,
-                        'ativo': ativo,
-                        'direcao': direcao
-                    })
-                
-                st.session_state.bot_total_ops += 1
             else:
                 # Informar o motivo da não entrada
                 log_message(f"❌ ENTRADA NÃO REALIZADA: {motivo_nao_entrada}")

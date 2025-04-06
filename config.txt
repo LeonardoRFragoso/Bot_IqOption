@@ -6,14 +6,14 @@ tipo = automatico
 valor_entrada = 50.0
 stop_win = 500.0
 stop_loss = 500.0
-analise_medias = S
+analise_medias = N
 velas_medias = 3
 estrategia = Torres Gemeas
-ativo = EURUSD-OTC
+ativo = EURGBP-OTC
 [MARTINGALE]
-usar = N
-niveis = 0
-fator = 0.0
+usar = S
+niveis = 1
+fator = 2.3
 [SOROS]
 usar = N
 niveis = 0
