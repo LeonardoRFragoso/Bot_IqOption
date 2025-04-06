@@ -1,0 +1,102 @@
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:52,856 - INFO - Configuração salva em config.txt
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,846 - INFO - Conectado com sucesso.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:56,850 - INFO - Conta demo selecionada.
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:19:57,442 - INFO - Saldo atual: R$ 10010.19
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:20:48,998 - INFO - Catalogador executado com sucesso.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:34,470 - INFO - Estratégia 'Torres Gemeas' e ativo 'EURGBP-OTC' salvos na configuração.
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,622 - INFO - Bot iniciado - Estratégia: Torres Gemeas, Ativo: EURGBP-OTC, Valor: 50.0
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas
+2025-04-06 19:23:37,629 - INFO - Analisando entrada para EURGBP-OTC com estratégia Torres Gemeas

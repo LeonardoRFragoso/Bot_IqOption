@@ -46,16 +46,16 @@ stop_loss = float(config['AJUSTES']['stop_loss'])
 lucro_total = 0
 stop = True
 
-if config['MARTINGALE']['usar_martingale'].upper() == 'S':
-    martingale = int(config['MARTINGALE']['niveis_martingale'])
+if config['MARTINGALE']['usar'].upper() == 'S':
+    martingale = int(config['MARTINGALE']['niveis'])
 else:
     martingale = 0
-fator_mg = float(config['MARTINGALE']['fator_martingale'])
+fator_mg = float(config['MARTINGALE']['fator'])
 
 
-if config['SOROS']['usar_soros'].upper() == 'S':
+if config['SOROS']['usar'].upper() == 'S':
     soros = True
-    niveis_soros = int(config['SOROS']['niveis_soros'])
+    niveis_soros = int(config['SOROS']['niveis'])
     nivel_soros = 0
 
 else:

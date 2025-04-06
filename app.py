@@ -23,6 +23,11 @@ warnings.filterwarnings("ignore", message=".*Thread.*")
 # Configurar um logger personalizado para o bot
 bot_logger = logging.getLogger('bot_iqoption')
 bot_logger.setLevel(logging.INFO)
+bot_logger.propagate = False  # Impedir propagação para evitar duplicação
+
+# Remover handlers existentes para evitar duplicação
+if bot_logger.handlers:
+    bot_logger.handlers.clear()
 
 # Handler para console
 console_handler = logging.StreamHandler()
@@ -44,7 +49,7 @@ except:
 # Configuração da página
 st.set_page_config(
     page_title="Bot IQ Option Trader",
-    page_icon="💹",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -311,6 +316,37 @@ if "bot_total_ops" not in st.session_state:
     st.session_state.bot_total_ops = 0
 if "bot_historico" not in st.session_state:
     st.session_state.bot_historico = []
+if "log" not in st.session_state:
+    st.session_state.log = []
+
+# Função auxiliar para acessar session_state com segurança
+def safe_session_state_update(key, value):
+    try:
+        if key not in st.session_state:
+            st.session_state[key] = value
+        else:
+            st.session_state[key] = value
+    except Exception as e:
+        bot_logger.error(f"Erro ao atualizar session_state[{key}]: {str(e)}")
+
+# Função auxiliar para incrementar session_state com segurança
+def safe_session_state_increment(key):
+    try:
+        if key not in st.session_state:
+            st.session_state[key] = 1
+        else:
+            st.session_state[key] += 1
+    except Exception as e:
+        bot_logger.error(f"Erro ao incrementar session_state[{key}]: {str(e)}")
+
+# Função auxiliar para adicionar ao histórico com segurança
+def safe_add_to_historico(item):
+    try:
+        if "bot_historico" not in st.session_state:
+            st.session_state.bot_historico = []
+        st.session_state.bot_historico.append(item)
+    except Exception as e:
+        bot_logger.error(f"Erro ao adicionar ao histórico: {str(e)}")
 
 # -----------------------------------------------------------------------------
 # Função para registrar mensagens no log do dashboard
@@ -321,37 +357,63 @@ def log_message(msg):
     st.session_state.log.append(f"{timestamp} - {msg}")
     
     # Usar o logger personalizado para evitar avisos de ScriptRunContext
+    # Evita duplicação de logs ao usar apenas o logger personalizado
     bot_logger.info(msg)
     
-    # Para comunicação entre threads
+    # Para comunicação entre threads - Apenas atualiza contadores, não duplica logs
     if "bot_messages" in st.session_state:
-        st.session_state.bot_messages.append(f"{timestamp} - {msg}")
+        # Não adiciona a mensagem novamente, apenas atualiza os contadores
+        # st.session_state.bot_messages.append(f"{timestamp} - {msg}")
         
         # Atualiza contadores baseados na mensagem
         if "RESULTADO: WIN" in msg:
-            st.session_state.bot_wins += 1
-            st.session_state.bot_total_ops += 1
+            # Verificar se as variáveis existem antes de incrementar
+            if "bot_wins" not in st.session_state:
+                st.session_state.bot_wins = 1
+            else:
+                st.session_state.bot_wins += 1
+                
+            if "bot_total_ops" not in st.session_state:
+                st.session_state.bot_total_ops = 1
+            else:
+                st.session_state.bot_total_ops += 1
+                
         elif "RESULTADO: LOSS" in msg:
-            st.session_state.bot_losses += 1
-            st.session_state.bot_total_ops += 1
+            # Verificar se as variáveis existem antes de incrementar
+            if "bot_losses" not in st.session_state:
+                st.session_state.bot_losses = 1
+            else:
+                st.session_state.bot_losses += 1
+                
+            if "bot_total_ops" not in st.session_state:
+                st.session_state.bot_total_ops = 1
+            else:
+                st.session_state.bot_total_ops += 1
+                
         elif "RESULTADO: EMPATE" in msg:
-            st.session_state.bot_empates += 1
-            st.session_state.bot_total_ops += 1
+            # Verificar se as variáveis existem antes de incrementar
+            if "bot_empates" not in st.session_state:
+                st.session_state.bot_empates = 1
+            else:
+                st.session_state.bot_empates += 1
+                
+            if "bot_total_ops" not in st.session_state:
+                st.session_state.bot_total_ops = 1
+            else:
+                st.session_state.bot_total_ops += 1
         
         # Atualiza lucro total
         if "Lucro Total:" in msg:
             try:
+                if "bot_lucro_total" not in st.session_state:
+                    st.session_state.bot_lucro_total = 0.0
                 st.session_state.bot_lucro_total = float(msg.split("Lucro Total:")[1].strip())
             except:
                 pass
 
-# Inicializa variáveis de estado (exceto o controle do bot)
-if "log" not in st.session_state:
-    st.session_state.log = []
-
 # -----------------------------------------------------------------------------
 # Sidebar – Configuração e Login
-st.sidebar.markdown("<h2 style='text-align: center; background: linear-gradient(90deg, #0078ff, #00bfff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 600; margin-bottom: 20px;'>⚙️ Configuração e Login</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 style='text-align: center; background: linear-gradient(90deg, #0078ff, #00bfff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 600; margin-bottom: 20px;'> Configuração e Login</h2>", unsafe_allow_html=True)
 
 # Adiciona logo na sidebar
 st.sidebar.markdown("""
@@ -360,12 +422,12 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.sidebar.expander("📧 Credenciais", expanded=True):
+with st.sidebar.expander("", expanded=True):
     email = st.text_input("Email", value="", key="email", placeholder="Seu email na IQ Option")
     senha = st.text_input("Senha", type="password", key="senha", placeholder="Sua senha")
     conta = st.selectbox("Conta", ["Demo", "Real"], key="conta")
 
-with st.sidebar.expander("💰 Configurações de Operação", expanded=True):
+with st.sidebar.expander("", expanded=True):
     tipo = st.selectbox("Tipo de Operação", ["automatico", "digital", "binary"], key="tipo", 
                         help="Escolha o tipo de operação a ser realizada")
     
@@ -382,7 +444,7 @@ with st.sidebar.expander("💰 Configurações de Operação", expanded=True):
         stop_loss = st.number_input("Stop Loss", value=5.0, key="stop_loss", 
                                   min_value=0.0, format="%.2f")
 
-with st.sidebar.expander("🔄 Configurações de Martingale", expanded=False):
+with st.sidebar.expander("", expanded=False):
     usar_martingale = st.checkbox("Usar Martingale", value=False, key="usar_martingale")
     if usar_martingale:
         col1, col2 = st.columns(2)
@@ -394,14 +456,14 @@ with st.sidebar.expander("🔄 Configurações de Martingale", expanded=False):
         niveis_martingale = 0
         fator_martingale = 0.0
 
-with st.sidebar.expander("📈 Configurações de Soros", expanded=False):
+with st.sidebar.expander("", expanded=False):
     usar_soros = st.checkbox("Usar Soros", value=False, key="usar_soros")
     if usar_soros:
         niveis_soros = st.number_input("Níveis de Soros", value=1, step=1, key="niveis_soros", min_value=1)
     else:
         niveis_soros = 0
 
-with st.sidebar.expander("📊 Configurações de Análise", expanded=False):
+with st.sidebar.expander("", expanded=False):
     analise_medias = st.selectbox("Análise de Médias", ["S", "N"], key="analise_medias")
     velas_medias = st.number_input("Número de Velas para Médias", value=3, step=1, key="velas_medias", min_value=1)
 
@@ -414,7 +476,7 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-if st.sidebar.button("💾 Salvar Configuração", use_container_width=True):
+if st.sidebar.button("", use_container_width=True, key="salvar_config"):
     # Obtém a estratégia e ativo selecionados (se disponíveis)
     estrategia = st.session_state.get("estrategia_choice", "MHI")
     ativo = st.session_state.get("ativo_input", "")
@@ -449,10 +511,10 @@ if st.sidebar.button("💾 Salvar Configuração", use_container_width=True):
         config.filename = "config.txt"
         config.write()
         
-        st.sidebar.success("✅ Configuração salva em config.txt")
+        st.sidebar.success("")
         log_message("Configuração salva em config.txt")
     except Exception as e:
-        st.sidebar.error(f"❌ Erro ao salvar configuração: {str(e)}")
+        st.sidebar.error(f" Erro ao salvar configuração: {str(e)}")
         log_message(f"Erro ao salvar configuração: {str(e)}")
         
         # Tenta uma abordagem alternativa se a primeira falhar
@@ -481,13 +543,13 @@ if st.sidebar.button("💾 Salvar Configuração", use_container_width=True):
                 f.write(f"usar = {'S' if usar_soros else 'N'}\n")
                 f.write(f"niveis = {niveis_soros}\n")
             
-            st.sidebar.success("✅ Configuração salva usando método alternativo!")
+            st.sidebar.success("")
         except Exception as e2:
-            st.sidebar.error(f"❌ Falha no método alternativo: {str(e2)}")
+            st.sidebar.error(f" Falha no método alternativo: {str(e2)}")
 
 # -----------------------------------------------------------------------------
 # Seção: Conectar na IQ Option
-st.markdown("<h2 class='sub-header'>🔌 1 - Conectar na IQ Option</h2>", unsafe_allow_html=True)
+st.markdown("<h2 class='sub-header'> 1 - Conectar na IQ Option</h2>", unsafe_allow_html=True)
 
 with st.container():
     st.markdown("""
@@ -504,13 +566,13 @@ with st.container():
     </div>
     """, unsafe_allow_html=True)
     
-    if st.button("🔑 Conectar", use_container_width=True):
+    if st.button("", use_container_width=True, key="conectar"):
         try:
             with st.spinner("Conectando à IQ Option..."):
                 st.session_state.API = IQ_Option(email, senha)
                 check, reason = st.session_state.API.connect()
                 if check:
-                    st.success("✅ Conectado com sucesso!")
+                    st.success("")
                     log_message("Conectado com sucesso.")
                     if conta == "Demo":
                         st.session_state.API.change_balance("PRACTICE")
@@ -532,7 +594,7 @@ with st.container():
 # -----------------------------------------------------------------------------
 # Seção: Catalogador e Seleção de Estratégia
 if "API" in st.session_state:
-    st.markdown("<h2 class='sub-header'>📊 2 - Executar Catalogador e Selecionar Estratégia</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='sub-header'> 2 - Executar Catalogador e Selecionar Estratégia</h2>", unsafe_allow_html=True)
     
     with st.container():
         st.markdown("""
@@ -552,7 +614,7 @@ if "API" in st.session_state:
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            if st.button("📈 Executar Catalogador", use_container_width=True):
+            if st.button("", use_container_width=True, key="executar_catalogador"):
                 try:
                     with st.spinner("Executando catalogador..."):
                         lista_catalog, linha = catag(st.session_state.API)
@@ -560,9 +622,9 @@ if "API" in st.session_state:
                             st.session_state.lista_catalog = lista_catalog
                             st.session_state.linha_catalog = linha
                             log_message("Catalogador executado com sucesso.")
-                            st.success("✅ Catalogador executado com sucesso!")
+                            st.success("")
                         else:
-                            st.error("❌ Erro ao executar catalogador.")
+                            st.error("")
                             log_message("Erro ao executar catalogador.")
                 except Exception as e:
                     st.error(f" Exceção no catalogador: {str(e)}")
@@ -570,67 +632,59 @@ if "API" in st.session_state:
         
         with col2:
             estrategia_choice = st.selectbox(
-                "Selecione a Estratégia",
-                ["MHI", "Torres Gemeas", "MHI M5"],
+                "",
+                ["MHI", "", ""],
                 key="estrategia_choice",
-                help="Escolha a estratégia que deseja utilizar para operar"
+                help=""
             )
         
         # Exibição dos resultados do catalogador
         if "lista_catalog" in st.session_state:
-            with st.expander("📋 Resultados do Catalogador", expanded=True):
+            with st.expander("", expanded=True):
                 # Define os cabeçalhos fixos para a tabela
-                headers = ["Estratégia", "Par", "Win%", "Gale1%", "Gale2%"]
+                headers = ["", "", "", "", ""]
                 st.markdown(f"```\n{tabulate(st.session_state.lista_catalog, headers=headers, tablefmt='pretty')}\n```")
                 
                 # Extrair ativos da lista de catalogação
                 ativos = [item[1] for item in st.session_state.lista_catalog]  # Índice 1 contém o nome do par
                 default_ativo = ativos[0] if ativos else ""
                 
-                st.markdown("<p style='margin-top:15px;'><b>Selecione o ativo para operar:</b></p>", unsafe_allow_html=True)
-                ativo_input = st.selectbox("Ativo", ativos, index=0) if ativos else st.text_input("Digite o ativo que deseja operar:", value=default_ativo)
+                st.markdown("<p style='margin-top:15px;'><b></b></p>", unsafe_allow_html=True)
+                ativo_input = st.selectbox("", ativos, index=0) if ativos else st.text_input("", value=default_ativo)
                 
                 # Botão para salvar a estratégia e ativo selecionados
-                if st.button("💾 Salvar Estratégia e Ativo", use_container_width=True):
+                if st.button("", use_container_width=True, key="salvar_estrategia"):
                     # Atualiza o arquivo de configuração
                     try:
-                        # Lê a configuração existente primeiro
+                        # Lê a configuração existente ou cria uma nova
                         try:
                             config = ConfigObj('config.txt')
                         except:
-                            # Se o arquivo não existir ou estiver corrompido, cria um novo
                             config = ConfigObj()
                             
-                        # Garante que a seção AJUSTES existe
-                        if 'AJUSTES' not in config:
-                            config['AJUSTES'] = {}
-                        
-                        # Sanitiza os valores para evitar problemas de codificação
-                        estrategia_sanitizada = estrategia_choice.replace('ê', 'e').replace('ã', 'a')
-                        
                         # Atualiza as configurações
-                        config['AJUSTES']['estrategia'] = estrategia_sanitizada
-                        config['AJUSTES']['ativo'] = ativo_input
+                        config["AJUSTES"] = {"estrategia": estrategia_choice,
+                            "ativo": ativo_input}
                         
                         # Salva o arquivo
                         config.filename = 'config.txt'
                         config.write()
                         
-                        st.success(f"✅ Estratégia '{estrategia_choice}' e ativo '{ativo_input}' salvos com sucesso!")
-                        log_message(f"Estratégia '{estrategia_choice}' e ativo '{ativo_input}' salvos na configuração.")
+                        st.success("")
+                        log_message(f"" + estrategia_choice + "" + ativo_input + "")
                     except Exception as e:
-                        st.error(f"❌ Erro ao salvar configuração: {str(e)}")
+                        st.error(f" Erro ao salvar configuração: {str(e)}")
                         log_message(f"Erro ao salvar configuração: {str(e)}")
                         
                         # Tenta uma abordagem alternativa se a primeira falhar
                         try:
                             with open('config.txt', 'w') as f:
-                                f.write(f"[AJUSTES]\nestrategia = {estrategia_choice.replace('ê', 'e').replace('ã', 'a')}\nativo = {ativo_input}\n")
-                            st.success("✅ Configuração salva usando método alternativo!")
+                                f.write(f"[AJUSTES]\nestrategia = {estrategia_choice}\nativo = {ativo_input}\n")
+                            st.success("")
                         except Exception as e2:
-                            st.error(f"❌ Falha no método alternativo: {str(e2)}")
+                            st.error(f" Falha no método alternativo: {str(e2)}")
         else:
-            ativo_input = st.text_input("Digite o ativo que deseja operar:", value="")
+            ativo_input = st.text_input("", value="")
 
 # -----------------------------------------------------------------------------
 # Função que roda o bot em thread separada, recebendo a API como parâmetro
@@ -689,12 +743,12 @@ def run_bot(api):
             try:
                 check_open = api.check_connect()
                 if not check_open:
-                    log_message("❌ ENTRADA NÃO REALIZADA: Conexão com a IQ Option perdida. Tentando reconectar...")
+                    log_message("")
                     api.connect()
                     time.sleep(5)
                     continue
             except Exception as e:
-                log_message(f"❌ ENTRADA NÃO REALIZADA: Erro de conexão - {str(e)}")
+                log_message(f" Erro de conexão - {str(e)}")
                 time.sleep(5)
                 continue
             
@@ -703,27 +757,27 @@ def run_bot(api):
                 if ativo:
                     ativo_aberto = api.get_all_open_time()
                     if ativo not in ativo_aberto['binary'] or not ativo_aberto['binary'][ativo]['open']:
-                        log_message(f"❌ ENTRADA NÃO REALIZADA: Ativo {ativo} não está disponível no momento")
+                        log_message(f" ENTRADA NÃO REALIZADA: Ativo {ativo} não está disponível no momento")
                         
                         # Contar tempo para próxima verificação
                         for i in range(tempo_entre_operacoes, 0, -1):
                             if not BOT_RUNNING:
                                 break
-                            log_message(f"⏱️ Próxima verificação em {i} segundos...")
+                            log_message(f" Próxima verificação em {i} segundos...")
                             time.sleep(1)
                         continue
                 else:
-                    log_message("❌ ENTRADA NÃO REALIZADA: Nenhum ativo selecionado")
+                    log_message("")
                     time.sleep(5)
                     continue
             except Exception as e:
-                log_message(f"❌ ENTRADA NÃO REALIZADA: Erro ao verificar disponibilidade do ativo - {str(e)}")
+                log_message(f" Erro ao verificar disponibilidade do ativo - {str(e)}")
                 time.sleep(5)
                 continue
             
             # Verificar condições da estratégia
             condicoes_atendidas = False
-            motivo_nao_entrada = "Condições da estratégia não atendidas"
+            motivo_nao_entrada = ""
             
             # Implementar verificação de acordo com a estratégia selecionada
             if estrategia == "MHI":
@@ -748,13 +802,13 @@ def run_bot(api):
                 except Exception as e:
                     motivo_nao_entrada = f"Erro na análise MHI: {str(e)}"
             
-            elif estrategia == "Torres Gemeas":
-                # Lógica para Torres Gemeas (exemplo)
+            elif estrategia == "":
+                # Lógica para (exemplo)
                 try:
                     # Obter velas para análise
                     velas = api.get_candles(ativo, 60, 10, time.time())
                     
-                    # Verificar padrão Torres Gemeas (exemplo simplificado)
+                    # Verificar padrão (exemplo simplificado)
                     if len(velas) >= 5:
                         # Exemplo: verificar se há duas velas consecutivas na mesma direção
                         ultimas_cores = [1 if vela['close'] > vela['open'] else 0 for vela in velas[-5:]]
@@ -763,19 +817,19 @@ def run_bot(api):
                             condicoes_atendidas = True
                             direcao = "PUT" if ultimas_cores[-1] == 1 else "CALL"  # Inversão após duas velas iguais
                         else:
-                            motivo_nao_entrada = f"Padrão Torres Gemeas não identificado. Últimas cores: {ultimas_cores[-5:]}"
+                            motivo_nao_entrada = f"Padrão não identificado. Últimas cores: {ultimas_cores[-5:]}"
                     else:
-                        motivo_nao_entrada = "Dados insuficientes para análise Torres Gemeas"
+                        motivo_nao_entrada = "Dados insuficientes para análise "
                 except Exception as e:
-                    motivo_nao_entrada = f"Erro na análise Torres Gemeas: {str(e)}"
+                    motivo_nao_entrada = f"Erro na análise : {str(e)}"
             
-            elif estrategia == "MHI M5":
-                # Lógica para MHI M5 (exemplo)
+            elif estrategia == "":
+                # Lógica para (exemplo)
                 try:
                     # Obter velas para análise
                     velas = api.get_candles(ativo, 300, 5, time.time())  # M5 = 300 segundos
                     
-                    # Verificar padrão MHI M5 (exemplo simplificado)
+                    # Verificar padrão M5 (exemplo simplificado)
                     if len(velas) >= 3:
                         # Verificar se as últimas 3 velas seguem um padrão específico
                         ultimas_cores = [1 if vela['close'] > vela['open'] else 0 for vela in velas[-3:]]
@@ -785,18 +839,18 @@ def run_bot(api):
                             condicoes_atendidas = True
                             direcao = "CALL" if ultimas_cores[-1] == 0 else "PUT"
                         else:
-                            motivo_nao_entrada = f"Padrão MHI M5 não identificado. Padrão atual: {ultimas_cores}"
+                            motivo_nao_entrada = f"Padrão M5 não identificado. Padrão atual: {ultimas_cores}"
                     else:
-                        motivo_nao_entrada = "Dados insuficientes para análise MHI M5"
+                        motivo_nao_entrada = "Dados insuficientes para análise M5"
                 except Exception as e:
-                    motivo_nao_entrada = f"Erro na análise MHI M5: {str(e)}"
+                    motivo_nao_entrada = f"Erro na análise M5: {str(e)}"
             
             else:
                 motivo_nao_entrada = f"Estratégia '{estrategia}' não implementada"
             
             # Realizar entrada se condições forem atendidas
             if condicoes_atendidas:
-                log_message(f"✅ CONDIÇÕES ATENDIDAS: Realizando entrada {direcao} em {ativo}")
+                log_message(f" CONDIÇÕES ATENDIDAS: Realizando entrada {direcao} em {ativo}")
                 
                 # Implementação da função de compra baseada no script original
                 entrada_valor = valor_atual
@@ -823,11 +877,11 @@ def run_bot(api):
                     if i > 0:
                         # Aplicar martingale
                         valor_compra = round(valor_compra * fator_martingale, 2)
-                        log_message(f"🔄 MARTINGALE {i}: Aumentando valor para {valor_compra:.2f}")
+                        log_message(f" MARTINGALE {i}: Aumentando valor para {valor_compra:.2f}")
                     
                     # Executar a compra na API
                     try:
-                        log_message(f"🔄 ENTRADA REALIZADA: {ativo}, Direção: {direcao}, Valor: {valor_compra:.2f}")
+                        log_message(f" ENTRADA REALIZADA: {ativo}, Direção: {direcao}, Valor: {valor_compra:.2f}")
                         
                         if tipo.lower() == 'digital':
                             status, id = api.buy_digital_spot_v2(ativo, valor_compra, direcao, 1)  # 1 minuto de expiração
@@ -835,7 +889,7 @@ def run_bot(api):
                             status, id = api.buy(valor_compra, ativo, direcao, 1)  # 1 minuto de expiração
                         
                         if status:
-                            log_message(f"✅ Ordem aberta com sucesso{' para gale ' + str(i) if i > 0 else ''}")
+                            log_message(f" Ordem aberta com sucesso{' para gale ' + str(i) if i > 0 else ''}")
                             
                             # Aguardar resultado
                             tempo_espera = 0
@@ -855,104 +909,144 @@ def run_bot(api):
                                         timestamp = datetime.now().strftime("%H:%M:%S")
                                         resultado_valor = round(resultado_valor, 2)
                                         
-                                        if resultado_valor > 0:
-                                            # WIN
-                                            resultado = 'WIN'
-                                            lucro_atual += resultado_valor
-                                            st.session_state.bot_wins += 1
-                                            st.session_state.bot_lucro_total += resultado_valor
-                                            log_message(f"✅ RESULTADO: WIN +{resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
-                                            
-                                            # Registra a operação no histórico
-                                            st.session_state.bot_historico.append({
-                                                'timestamp': timestamp,
-                                                'resultado': 'WIN',
-                                                'valor': valor_compra,
-                                                'lucro': resultado_valor,
-                                                'lucro_acumulado': lucro_atual,
-                                                'estrategia': estrategia,
-                                                'ativo': ativo,
-                                                'direcao': direcao,
-                                                'martingale': i if i > 0 else None
-                                            })
-                                            
-                                            # Reset martingale
-                                            nivel_atual_martingale = 0
-                                            valor_atual = valor_entrada
-                                            
-                                            # Lógica de Soros
-                                            if usar_soros and nivel_atual_soros < niveis_soros:
-                                                nivel_atual_soros += 1
-                                                valor_atual = valor_atual + resultado_valor
-                                                log_message(f"🔄 SOROS: Próxima entrada com {valor_atual:.2f}")
+                                        try:
+                                            if resultado_valor > 0:
+                                                # WIN
+                                                resultado = 'WIN'
+                                                lucro_atual += resultado_valor
+                                                # Verificar se as variáveis existem antes de incrementar
+                                                if "bot_wins" not in st.session_state:
+                                                    st.session_state.bot_wins = 1
+                                                else:
+                                                    st.session_state.bot_wins += 1
+                                                if "bot_lucro_total" not in st.session_state:
+                                                    st.session_state.bot_lucro_total = resultado_valor
+                                                else:
+                                                    st.session_state.bot_lucro_total += resultado_valor
+                                                log_message(f" RESULTADO: WIN +{resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
+                                                
+                                                # Registra a operação no histórico
+                                                try:
+                                                    if "bot_historico" not in st.session_state:
+                                                        st.session_state.bot_historico = []
+                                                    st.session_state.bot_historico.append({
+                                                        'timestamp': timestamp,
+                                                        'resultado': 'WIN',
+                                                        'valor': valor_compra,
+                                                        'lucro': resultado_valor,
+                                                        'lucro_acumulado': lucro_atual,
+                                                        'estrategia': estrategia,
+                                                        'ativo': ativo,
+                                                        'direcao': direcao,
+                                                        'martingale': i
+                                                    })
+                                                except Exception as e:
+                                                    bot_logger.error(f"Erro ao adicionar ao histórico: {str(e)}")
+                                                
+                                                # Reset martingale após WIN
+                                                nivel_atual_martingale = 0
+                                                
+                                                # Aplicar Soros se configurado
+                                                if usar_soros and nivel_atual_soros < niveis_soros:
+                                                    nivel_atual_soros += 1
+                                                    valor_atual = valor_atual + resultado_valor
+                                                    log_message(f" SOROS: Próxima entrada com {valor_atual:.2f}")
+                                                else:
+                                                    nivel_atual_soros = 0
+                                                    valor_atual = valor_entrada
+                                                
+                                            elif resultado_valor == 0:
+                                                # EMPATE
+                                                resultado = 'EMPATE'
+                                                # Verificar se as variáveis existem antes de incrementar
+                                                if "bot_empates" not in st.session_state:
+                                                    st.session_state.bot_empates = 1
+                                                else:
+                                                    st.session_state.bot_empates += 1
+                                                log_message(f" RESULTADO: EMPATE{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
+                                                
+                                                # Registra a operação no histórico
+                                                try:
+                                                    if "bot_historico" not in st.session_state:
+                                                        st.session_state.bot_historico = []
+                                                    st.session_state.bot_historico.append({
+                                                        'timestamp': timestamp,
+                                                        'resultado': 'EMPATE',
+                                                        'valor': valor_compra,
+                                                        'lucro': 0,
+                                                        'lucro_acumulado': lucro_atual,
+                                                        'estrategia': estrategia,
+                                                        'ativo': ativo,
+                                                        'direcao': direcao,
+                                                        'martingale': i
+                                                    })
+                                                except Exception as e:
+                                                    bot_logger.error(f"Erro ao adicionar ao histórico: {str(e)}")
+                                                
+                                                # Não altera martingale em caso de empate
+                                                
                                             else:
-                                                nivel_atual_soros = 0
-                                                valor_atual = valor_entrada
+                                                # LOSS
+                                                resultado = 'LOSS'
+                                                lucro_atual += resultado_valor  # Resultado negativo
+                                                # Verificar se as variáveis existem antes de incrementar
+                                                if "bot_losses" not in st.session_state:
+                                                    st.session_state.bot_losses = 1
+                                                else:
+                                                    st.session_state.bot_losses += 1
+                                                if "bot_lucro_total" not in st.session_state:
+                                                    st.session_state.bot_lucro_total = resultado_valor
+                                                else:
+                                                    st.session_state.bot_lucro_total += resultado_valor
+                                                log_message(f" RESULTADO: LOSS {resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
+                                                
+                                                # Registra a operação no histórico
+                                                try:
+                                                    if "bot_historico" not in st.session_state:
+                                                        st.session_state.bot_historico = []
+                                                    st.session_state.bot_historico.append({
+                                                        'timestamp': timestamp,
+                                                        'resultado': 'LOSS',
+                                                        'valor': valor_compra,
+                                                        'lucro': resultado_valor,
+                                                        'lucro_acumulado': lucro_atual,
+                                                        'estrategia': estrategia,
+                                                        'ativo': ativo,
+                                                        'direcao': direcao,
+                                                        'martingale': i
+                                                    })
+                                                except Exception as e:
+                                                    bot_logger.error(f"Erro ao adicionar ao histórico: {str(e)}")
+                                                
+                                                # Se tiver martingale configurado e não atingiu o nível máximo
+                                                # Não incrementa aqui, apenas sai do loop de espera
+                                                if i < nivel_atual_martingale:
+                                                    break  # Sai do loop de espera para ir para o próximo martingale
                                             
-                                            break  # Sai do loop de martingale após um WIN
-                                            
-                                        elif resultado_valor == 0:
-                                            # EMPATE
-                                            resultado = 'EMPATE'
-                                            st.session_state.bot_empates += 1
-                                            log_message(f"🔄 RESULTADO: EMPATE{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
-                                            
-                                            # Registra a operação no histórico
-                                            st.session_state.bot_historico.append({
-                                                'timestamp': timestamp,
-                                                'resultado': 'EMPATE',
-                                                'valor': valor_compra,
-                                                'lucro': 0,
-                                                'lucro_acumulado': lucro_atual,
-                                                'estrategia': estrategia,
-                                                'ativo': ativo,
-                                                'direcao': direcao,
-                                                'martingale': i if i > 0 else None
-                                            })
-                                            
-                                            break  # Não continua o martingale em caso de empate
-                                            
-                                        else:
-                                            # LOSS
-                                            resultado = 'LOSS'
-                                            lucro_atual += resultado_valor  # Resultado negativo
-                                            st.session_state.bot_losses += 1
-                                            st.session_state.bot_lucro_total += resultado_valor
-                                            log_message(f"❌ RESULTADO: LOSS {resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
-                                            
-                                            # Registra a operação no histórico
-                                            st.session_state.bot_historico.append({
-                                                'timestamp': timestamp,
-                                                'resultado': 'LOSS',
-                                                'valor': valor_compra,
-                                                'lucro': resultado_valor,
-                                                'lucro_acumulado': lucro_atual,
-                                                'estrategia': estrategia,
-                                                'ativo': ativo,
-                                                'direcao': direcao,
-                                                'martingale': i if i > 0 else None
-                                            })
-                                            
-                                            # Reset soros
-                                            nivel_atual_soros = 0
-                                            
-                                            # Continua para o próximo nível de martingale se não for o último
-                                            if i < nivel_atual_martingale:
-                                                break  # Sai do loop de espera para ir para o próximo martingale
-                                        
-                                        st.session_state.bot_total_ops += 1
-                                        break  # Sai do loop de espera após obter o resultado
-                                
+                                            # Incrementa contador de operações totais
+                                            try:
+                                                if "bot_total_ops" not in st.session_state:
+                                                    st.session_state.bot_total_ops = 1
+                                                else:
+                                                    st.session_state.bot_total_ops += 1
+                                            except Exception as e:
+                                                bot_logger.error(f"Erro ao incrementar operações totais: {str(e)}")
+                                                
+                                            break  # Sai do loop de espera após obter o resultado
+                                        except Exception as e:
+                                            log_message(f" Erro ao verificar resultado: {str(e)}")
+                                            if tempo_espera >= 59:  # Se estiver no último segundo de espera
+                                                break
                                 except Exception as e:
-                                    log_message(f"❌ Erro ao verificar resultado: {str(e)}")
+                                    log_message(f" Erro ao verificar resultado: {str(e)}")
                                     if tempo_espera >= 59:  # Se estiver no último segundo de espera
                                         break
                         else:
-                            log_message(f"❌ Erro na abertura da ordem: {id}")
+                            log_message(f" Erro na abertura da ordem: {id}")
                             break  # Sai do loop de martingale em caso de erro
                     
                     except Exception as e:
-                        log_message(f"❌ Erro ao realizar entrada: {str(e)}")
+                        log_message(f" Erro ao realizar entrada: {str(e)}")
                         break  # Sai do loop de martingale em caso de erro
                     
                     # Se teve WIN, sai do loop de martingale
@@ -963,31 +1057,31 @@ def run_bot(api):
                 if resultado == 'LOSS' and usar_martingale and nivel_atual_martingale < niveis_martingale:
                     nivel_atual_martingale += 1
                     valor_atual = valor_atual * fator_martingale
-                    log_message(f"🔄 MARTINGALE: Próxima entrada será com {valor_atual:.2f}")
+                    log_message(f" MARTINGALE: Próxima entrada será com {valor_atual:.2f}")
                 elif resultado == 'LOSS':
                     nivel_atual_martingale = 0
                     valor_atual = valor_entrada
             else:
                 # Informar o motivo da não entrada
-                log_message(f"❌ ENTRADA NÃO REALIZADA: {motivo_nao_entrada}")
+                log_message(f" ENTRADA NÃO REALIZADA: {motivo_nao_entrada}")
             
             # Aguarda intervalo entre operações com contagem regressiva
-            log_message(f"⏱️ Aguardando próxima operação...")
+            log_message(f" Aguardando próxima operação...")
             for i in range(tempo_entre_operacoes, 0, -1):
                 if not BOT_RUNNING:
                     break
                 if i % 10 == 0 or i <= 5:  # Mostrar apenas a cada 10 segundos e nos últimos 5 segundos
-                    log_message(f"⏱️ Próxima análise em {i} segundos...")
+                    log_message(f" Próxima análise em {i} segundos...")
                 time.sleep(1)
             
         except Exception as e:
-            log_message(f"❌ Erro na execução do bot: {str(e)}")
+            log_message(f" Erro na execução do bot: {str(e)}")
             time.sleep(5)
 
 # -----------------------------------------------------------------------------
 # Seção: Iniciar Bot e Dashboard de Resultados
 if "API" in st.session_state:
-    st.markdown("<h2 class='sub-header'>🤖 3 - Iniciar Bot e Acompanhar Resultados</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='sub-header'> 3 - Iniciar Bot e Acompanhar Resultados</h2>", unsafe_allow_html=True)
     
     with st.container():
         st.markdown("""
@@ -1004,7 +1098,7 @@ if "API" in st.session_state:
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("▶️ Iniciar Bot", use_container_width=True):
+        if st.button("", use_container_width=True, key="iniciar_bot"):
             # Efeito de animação ao iniciar o bot
             with st.spinner("Iniciando operações..."):
                 st.markdown("""
@@ -1029,8 +1123,16 @@ if "API" in st.session_state:
                 import logging
                 import warnings
                 
-                # Suprimir todos os avisos
-                warnings.filterwarnings("ignore")
+                # Desativar completamente todos os warnings do Python
+                warnings.simplefilter("ignore")
+                os.environ["PYTHONWARNINGS"] = "ignore"
+                
+                # Desativar todos os logs do Streamlit
+                for logger_name in logging.Logger.manager.loggerDict:
+                    if 'streamlit' in logger_name:
+                        logging.getLogger(logger_name).setLevel(logging.CRITICAL)
+                        logging.getLogger(logger_name).propagate = False
+                        logging.getLogger(logger_name).disabled = True
                 
                 # Redirecionar stderr para um arquivo nulo
                 class NullWriter:
@@ -1046,10 +1148,6 @@ if "API" in st.session_state:
                     # Redirecionar stderr para evitar mensagens de aviso
                     sys.stderr = NullWriter()
                     
-                    # Desativar todos os logs do Streamlit
-                    for logger_name in ['streamlit', 'streamlit.runtime', 'streamlit.runtime.scriptrunner']:
-                        logging.getLogger(logger_name).setLevel(logging.CRITICAL)
-                    
                     # Chamar a função real do bot
                     run_bot(api)
                 finally:
@@ -1060,7 +1158,7 @@ if "API" in st.session_state:
             bot_thread = threading.Thread(target=run_bot_with_warnings_suppressed, args=(api_instance,), daemon=True)
             bot_thread.start()
 
-    st.markdown("<h3 class='sub-header'>📊 Dashboard de Resultados</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'> Dashboard de Resultados</h3>", unsafe_allow_html=True)
     
     with st.container():
         st.markdown("""
@@ -1112,31 +1210,31 @@ if "API" in st.session_state:
                 
             # Atualiza os containers com as métricas
             lucro_total_container.metric(
-                label="💰 Lucro Total", 
+                label="", 
                 value=f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {lucro_total:.2f}",
                 delta=None
             )
             
             operacoes_container.metric(
-                label="🔄 Operações", 
+                label="", 
                 value=f"{st.session_state.bot_total_ops}",
-                delta=f"✅ {st.session_state.bot_wins} | ❌ {st.session_state.bot_losses} | 🤝 {st.session_state.bot_empates}"
+                delta=f"" + str(st.session_state.bot_wins) + "" + str(st.session_state.bot_losses) + "" + str(st.session_state.bot_empates) + ""
             )
             
             taxa_acerto_container.metric(
-                label="📈 Taxa de Acerto", 
+                label="", 
                 value=f"{taxa_acerto:.1f}%",
                 delta=None
             )
             
             stop_win_container.metric(
-                label="🎯 Stop Win", 
+                label="", 
                 value=f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {stop_win}",
                 delta=f"{(lucro_total/stop_win)*100:.1f}%" if stop_win > 0 else None
             )
             
             stop_loss_container.metric(
-                label="🛑 Stop Loss", 
+                label="", 
                 value=f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {stop_loss}",
                 delta=f"{(lucro_total/stop_loss)*100:.1f}%" if stop_loss > 0 else None
             )
@@ -1168,7 +1266,7 @@ if "API" in st.session_state:
                     
                     # Gráfico de pizza para resultados
                     if st.session_state.bot_total_ops > 0:
-                        labels = ['Vitórias', 'Derrotas', 'Empates']
+                        labels = ['', '', '']
                         values = [st.session_state.bot_wins, st.session_state.bot_losses, st.session_state.bot_empates]
                         colors = ['#28a745', '#dc3545', '#ffc107']
                         
@@ -1198,12 +1296,12 @@ if "API" in st.session_state:
                     <div class="stats-card">
                         <h4>Configuração Atual</h4>
                         <table class="stats-table">
-                            <tr><td>Estratégia</td><td>{estrategia_choice}</td></tr>
-                            <tr><td>Ativo</td><td>{ativo_input}</td></tr>
-                            <tr><td>Valor Entrada</td><td>{valor_entrada}</td></tr>
-                            <tr><td>Tipo</td><td>{tipo}</td></tr>
-                            <tr><td>Martingale</td><td>{"Sim" if usar_martingale else "Não"}</td></tr>
-                            <tr><td>Soros</td><td>{"Sim" if usar_soros else "Não"}</td></tr>
+                            <tr><td></td><td>{estrategia_choice}</td></tr>
+                            <tr><td></td><td>{ativo_input}</td></tr>
+                            <tr><td></td><td>{valor_entrada}</td></tr>
+                            <tr><td></td><td>{tipo}</td></tr>
+                            <tr><td></td><td>{"Sim" if usar_martingale else "Não"}</td></tr>
+                            <tr><td></td><td>{"Sim" if usar_soros else "Não"}</td></tr>
                         </table>
                     </div>
                     """, unsafe_allow_html=True)
