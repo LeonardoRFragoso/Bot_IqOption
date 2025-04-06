@@ -637,6 +637,9 @@ def run_bot(api):
     nivel_atual_martingale = 0
     nivel_atual_soros = 0
     
+    # Tempo entre operações (em segundos)
+    tempo_entre_operacoes = 60  # 1 minuto entre operações
+    
     log_message(f"Bot iniciado - Estratégia: {estrategia}, Ativo: {ativo}, Valor: {valor_entrada}")
     
     # Loop principal do bot
@@ -653,95 +656,228 @@ def run_bot(api):
                 BOT_RUNNING = False
                 break
             
-            # Lógica de operação (simplificada para exemplo)
+            # Lógica de operação baseada na estratégia
             log_message(f"Analisando entrada para {ativo} com estratégia {estrategia}")
             
-            # Simulação de análise e entrada
-            log_message(f"Entrada realizada: {ativo}, Valor: {valor_atual:.2f}")
+            # Verificar se o mercado está aberto
+            try:
+                check_open = api.check_connect()
+                if not check_open:
+                    log_message("❌ ENTRADA NÃO REALIZADA: Conexão com a IQ Option perdida. Tentando reconectar...")
+                    api.connect()
+                    time.sleep(5)
+                    continue
+            except Exception as e:
+                log_message(f"❌ ENTRADA NÃO REALIZADA: Erro de conexão - {str(e)}")
+                time.sleep(5)
+                continue
             
-            # Simulação do resultado (aleatório para exemplo)
-            resultado = np.random.choice(['WIN', 'LOSS', 'EMPATE'], p=[0.6, 0.35, 0.05])
-            
-            # Registra o timestamp da operação
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            
-            if resultado == 'WIN':
-                ganho = valor_atual * 0.8  # Simulando 80% de retorno
-                lucro_atual += ganho
-                st.session_state.bot_wins += 1
-                st.session_state.bot_lucro_total += ganho
-                log_message(f"RESULTADO: WIN +{ganho:.2f} | Lucro Total: {lucro_atual:.2f}")
-                
-                # Registra a operação no histórico
-                st.session_state.bot_historico.append({
-                    'timestamp': timestamp,
-                    'resultado': 'WIN',
-                    'valor': valor_atual,
-                    'lucro': ganho,
-                    'lucro_acumulado': lucro_atual
-                })
-                
-                # Reset martingale
-                nivel_atual_martingale = 0
-                valor_atual = valor_entrada
-                
-                # Lógica de Soros
-                if usar_soros and nivel_atual_soros < niveis_soros:
-                    nivel_atual_soros += 1
-                    valor_atual = valor_atual + ganho
-                    log_message(f"SOROS: Próxima entrada com {valor_atual:.2f}")
+            # Verificar se o ativo está disponível
+            try:
+                if ativo:
+                    ativo_aberto = api.get_all_open_time()
+                    if ativo not in ativo_aberto['binary'] or not ativo_aberto['binary'][ativo]['open']:
+                        log_message(f"❌ ENTRADA NÃO REALIZADA: Ativo {ativo} não está disponível no momento")
+                        
+                        # Contar tempo para próxima verificação
+                        for i in range(tempo_entre_operacoes, 0, -1):
+                            if not BOT_RUNNING:
+                                break
+                            log_message(f"⏱️ Próxima verificação em {i} segundos...")
+                            time.sleep(1)
+                        continue
                 else:
-                    nivel_atual_soros = 0
-                    valor_atual = valor_entrada
+                    log_message("❌ ENTRADA NÃO REALIZADA: Nenhum ativo selecionado")
+                    time.sleep(5)
+                    continue
+            except Exception as e:
+                log_message(f"❌ ENTRADA NÃO REALIZADA: Erro ao verificar disponibilidade do ativo - {str(e)}")
+                time.sleep(5)
+                continue
+            
+            # Verificar condições da estratégia
+            condicoes_atendidas = False
+            motivo_nao_entrada = "Condições da estratégia não atendidas"
+            
+            # Implementar verificação de acordo com a estratégia selecionada
+            if estrategia == "MHI":
+                # Lógica para MHI
+                try:
+                    # Obter velas para análise
+                    velas = api.get_candles(ativo, 60, 5, time.time())
+                    
+                    # Verificar padrão MHI (exemplo simplificado)
+                    if len(velas) >= 3:
+                        # Verificar se as últimas 3 velas seguem um padrão específico
+                        ultimas_cores = [1 if vela['close'] > vela['open'] else 0 for vela in velas[-3:]]
+                        
+                        # Exemplo: entrar se tiver alternância de cores nas últimas 3 velas
+                        if ultimas_cores == [1, 0, 1] or ultimas_cores == [0, 1, 0]:
+                            condicoes_atendidas = True
+                            direcao = "CALL" if ultimas_cores[-1] == 0 else "PUT"
+                        else:
+                            motivo_nao_entrada = f"Padrão MHI não identificado. Padrão atual: {ultimas_cores}"
+                    else:
+                        motivo_nao_entrada = "Dados insuficientes para análise MHI"
+                except Exception as e:
+                    motivo_nao_entrada = f"Erro na análise MHI: {str(e)}"
+            
+            elif estrategia == "Torres Gemeas":
+                # Lógica para Torres Gemeas (exemplo)
+                try:
+                    # Obter velas para análise
+                    velas = api.get_candles(ativo, 60, 10, time.time())
+                    
+                    # Verificar padrão Torres Gemeas (exemplo simplificado)
+                    if len(velas) >= 5:
+                        # Exemplo: verificar se há duas velas consecutivas na mesma direção
+                        ultimas_cores = [1 if vela['close'] > vela['open'] else 0 for vela in velas[-5:]]
+                        
+                        if ultimas_cores[-2] == ultimas_cores[-1]:
+                            condicoes_atendidas = True
+                            direcao = "PUT" if ultimas_cores[-1] == 1 else "CALL"  # Inversão após duas velas iguais
+                        else:
+                            motivo_nao_entrada = f"Padrão Torres Gemeas não identificado. Últimas cores: {ultimas_cores[-5:]}"
+                    else:
+                        motivo_nao_entrada = "Dados insuficientes para análise Torres Gemeas"
+                except Exception as e:
+                    motivo_nao_entrada = f"Erro na análise Torres Gemeas: {str(e)}"
+            
+            elif estrategia == "MHI M5":
+                # Lógica para MHI M5 (exemplo)
+                try:
+                    # Obter velas para análise
+                    velas = api.get_candles(ativo, 300, 5, time.time())  # M5 = 300 segundos
+                    
+                    # Verificar padrão MHI M5 (exemplo simplificado)
+                    if len(velas) >= 3:
+                        # Verificar se as últimas 3 velas seguem um padrão específico
+                        ultimas_cores = [1 if vela['close'] > vela['open'] else 0 for vela in velas[-3:]]
+                        
+                        # Exemplo: entrar se tiver alternância de cores nas últimas 3 velas
+                        if ultimas_cores == [1, 0, 1] or ultimas_cores == [0, 1, 0]:
+                            condicoes_atendidas = True
+                            direcao = "CALL" if ultimas_cores[-1] == 0 else "PUT"
+                        else:
+                            motivo_nao_entrada = f"Padrão MHI M5 não identificado. Padrão atual: {ultimas_cores}"
+                    else:
+                        motivo_nao_entrada = "Dados insuficientes para análise MHI M5"
+                except Exception as e:
+                    motivo_nao_entrada = f"Erro na análise MHI M5: {str(e)}"
+            
+            else:
+                motivo_nao_entrada = f"Estratégia '{estrategia}' não implementada"
+            
+            # Realizar entrada se condições forem atendidas
+            if condicoes_atendidas:
+                log_message(f"✅ CONDIÇÕES ATENDIDAS: Realizando entrada {direcao} em {ativo}")
                 
-            elif resultado == 'LOSS':
-                perda = valor_atual
-                lucro_atual -= perda
-                st.session_state.bot_losses += 1
-                st.session_state.bot_lucro_total -= perda
-                log_message(f"RESULTADO: LOSS -{perda:.2f} | Lucro Total: {lucro_atual:.2f}")
+                # Simulação de entrada (em um bot real, aqui seria a chamada para a API)
+                # api.buy(valor_atual, ativo, direcao, 1)  # 1 = expiração em 1 minuto
                 
-                # Registra a operação no histórico
-                st.session_state.bot_historico.append({
-                    'timestamp': timestamp,
-                    'resultado': 'LOSS',
-                    'valor': valor_atual,
-                    'lucro': -perda,
-                    'lucro_acumulado': lucro_atual
-                })
+                log_message(f"🔄 ENTRADA REALIZADA: {ativo}, Direção: {direcao}, Valor: {valor_atual:.2f}")
                 
-                # Reset soros
-                nivel_atual_soros = 0
+                # Simulação do resultado (aleatório para exemplo)
+                resultado = np.random.choice(['WIN', 'LOSS', 'EMPATE'], p=[0.6, 0.35, 0.05])
                 
-                # Lógica de Martingale
-                if usar_martingale and nivel_atual_martingale < niveis_martingale:
-                    nivel_atual_martingale += 1
-                    valor_atual = valor_atual * fator_martingale
-                    log_message(f"MARTINGALE: Próxima entrada com {valor_atual:.2f}")
-                else:
+                # Registra o timestamp da operação
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                
+                if resultado == 'WIN':
+                    ganho = valor_atual * 0.8  # Simulando 80% de retorno
+                    lucro_atual += ganho
+                    st.session_state.bot_wins += 1
+                    st.session_state.bot_lucro_total += ganho
+                    log_message(f"✅ RESULTADO: WIN +{ganho:.2f} | Lucro Total: {lucro_atual:.2f}")
+                    
+                    # Registra a operação no histórico
+                    st.session_state.bot_historico.append({
+                        'timestamp': timestamp,
+                        'resultado': 'WIN',
+                        'valor': valor_atual,
+                        'lucro': ganho,
+                        'lucro_acumulado': lucro_atual,
+                        'estrategia': estrategia,
+                        'ativo': ativo,
+                        'direcao': direcao
+                    })
+                    
+                    # Reset martingale
                     nivel_atual_martingale = 0
                     valor_atual = valor_entrada
+                    
+                    # Lógica de Soros
+                    if usar_soros and nivel_atual_soros < niveis_soros:
+                        nivel_atual_soros += 1
+                        valor_atual = valor_atual + ganho
+                        log_message(f"🔄 SOROS: Próxima entrada com {valor_atual:.2f}")
+                    else:
+                        nivel_atual_soros = 0
+                        valor_atual = valor_entrada
+                    
+                elif resultado == 'LOSS':
+                    perda = valor_atual
+                    lucro_atual -= perda
+                    st.session_state.bot_losses += 1
+                    st.session_state.bot_lucro_total -= perda
+                    log_message(f"❌ RESULTADO: LOSS -{perda:.2f} | Lucro Total: {lucro_atual:.2f}")
+                    
+                    # Registra a operação no histórico
+                    st.session_state.bot_historico.append({
+                        'timestamp': timestamp,
+                        'resultado': 'LOSS',
+                        'valor': valor_atual,
+                        'lucro': -perda,
+                        'lucro_acumulado': lucro_atual,
+                        'estrategia': estrategia,
+                        'ativo': ativo,
+                        'direcao': direcao
+                    })
+                    
+                    # Reset soros
+                    nivel_atual_soros = 0
+                    
+                    # Lógica de Martingale
+                    if usar_martingale and nivel_atual_martingale < niveis_martingale:
+                        nivel_atual_martingale += 1
+                        valor_atual = valor_atual * fator_martingale
+                        log_message(f"🔄 MARTINGALE: Próxima entrada com {valor_atual:.2f}")
+                    else:
+                        nivel_atual_martingale = 0
+                        valor_atual = valor_entrada
+                    
+                else:  # EMPATE
+                    st.session_state.bot_empates += 1
+                    log_message(f"🔄 RESULTADO: EMPATE | Lucro Total: {lucro_atual:.2f}")
+                    
+                    # Registra a operação no histórico
+                    st.session_state.bot_historico.append({
+                        'timestamp': timestamp,
+                        'resultado': 'EMPATE',
+                        'valor': valor_atual,
+                        'lucro': 0,
+                        'lucro_acumulado': lucro_atual,
+                        'estrategia': estrategia,
+                        'ativo': ativo,
+                        'direcao': direcao
+                    })
                 
-            else:  # EMPATE
-                st.session_state.bot_empates += 1
-                log_message(f"RESULTADO: EMPATE | Lucro Total: {lucro_atual:.2f}")
-                
-                # Registra a operação no histórico
-                st.session_state.bot_historico.append({
-                    'timestamp': timestamp,
-                    'resultado': 'EMPATE',
-                    'valor': valor_atual,
-                    'lucro': 0,
-                    'lucro_acumulado': lucro_atual
-                })
+                st.session_state.bot_total_ops += 1
+            else:
+                # Informar o motivo da não entrada
+                log_message(f"❌ ENTRADA NÃO REALIZADA: {motivo_nao_entrada}")
             
-            st.session_state.bot_total_ops += 1
-            
-            # Aguarda intervalo entre operações
-            time.sleep(5)  # Intervalo entre operações
+            # Aguarda intervalo entre operações com contagem regressiva
+            log_message(f"⏱️ Aguardando próxima operação...")
+            for i in range(tempo_entre_operacoes, 0, -1):
+                if not BOT_RUNNING:
+                    break
+                if i % 10 == 0 or i <= 5:  # Mostrar apenas a cada 10 segundos e nos últimos 5 segundos
+                    log_message(f"⏱️ Próxima análise em {i} segundos...")
+                time.sleep(1)
             
         except Exception as e:
-            log_message(f"Erro na execução do bot: {str(e)}")
+            log_message(f"❌ Erro na execução do bot: {str(e)}")
             time.sleep(5)
 
 # -----------------------------------------------------------------------------

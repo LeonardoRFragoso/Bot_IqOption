@@ -3,17 +3,17 @@ email = vaniasayonara@gmail.com
 senha = Marleyj@23
 [AJUSTES]
 tipo = automatico
-valor_entrada = 8.0
-stop_win = 50.0
-stop_loss = 70.0
-analise_medias = N
+valor_entrada = 50.0
+stop_win = 500.0
+stop_loss = 500.0
+analise_medias = S
 velas_medias = 3
-estrategia = MHI
-ativo = ""
+estrategia = Torres Gemeas
+ativo = EURUSD-OTC
 [MARTINGALE]
-usar = S
-niveis = 1
-fator = 2.0
+usar = N
+niveis = 0
+fator = 0.0
 [SOROS]
 usar = N
 niveis = 0
