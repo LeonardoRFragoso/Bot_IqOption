@@ -436,6 +436,204 @@ def log_message(msg, show_in_ui=True):
         """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
+# Função para validar configurações
+def validar_configuracoes():
+    """Valida as configurações antes de iniciar o bot"""
+    mensagens = []
+    
+    # Validar credenciais
+    if not st.session_state.get("email") or not st.session_state.get("senha"):
+        mensagens.append("Email e senha são obrigatórios")
+    
+    # Validar valores numéricos
+    try:
+        valor_entrada = float(st.session_state.get("valor_entrada", 0))
+        if valor_entrada <= 0:
+            mensagens.append("Valor de entrada deve ser maior que zero")
+    except:
+        mensagens.append("Valor de entrada inválido")
+    
+    try:
+        stop_win = float(st.session_state.get("stop_win", 0))
+        if stop_win <= 0:
+            mensagens.append("Stop Win deve ser maior que zero")
+    except:
+        mensagens.append("Stop Win inválido")
+    
+    try:
+        stop_loss = float(st.session_state.get("stop_loss", 0))
+        if stop_loss <= 0:
+            mensagens.append("Stop Loss deve ser maior que zero")
+    except:
+        mensagens.append("Stop Loss inválido")
+    
+    # Validar estratégia e ativo
+    estrategia = st.session_state.get("estrategia_choice")
+    if not estrategia:
+        mensagens.append("Selecione uma estratégia")
+    
+    ativo = st.session_state.get("ativo_input")
+    if not ativo:
+        mensagens.append("Selecione ou digite um ativo")
+    
+    return mensagens
+
+# Função para carregar configurações com verificação
+def carregar_configuracoes_seguras():
+    """Carrega configurações com verificação de existência de chaves"""
+    try:
+        config = ConfigObj('config.txt')
+        
+        # Verificar e criar seções se não existirem
+        if 'LOGIN' not in config:
+            config['LOGIN'] = {}
+        if 'AJUSTES' not in config:
+            config['AJUSTES'] = {}
+        if 'MARTINGALE' not in config:
+            config['MARTINGALE'] = {}
+        if 'SOROS' not in config:
+            config['SOROS'] = {}
+        
+        # Definir valores padrão para chaves ausentes
+        # LOGIN
+        if 'email' not in config['LOGIN']:
+            config['LOGIN']['email'] = ""
+        if 'senha' not in config['LOGIN']:
+            config['LOGIN']['senha'] = ""
+        
+        # AJUSTES
+        if 'tipo' not in config['AJUSTES']:
+            config['AJUSTES']['tipo'] = "automatico"
+        if 'valor_entrada' not in config['AJUSTES']:
+            config['AJUSTES']['valor_entrada'] = "2.0"
+        if 'stop_win' not in config['AJUSTES']:
+            config['AJUSTES']['stop_win'] = "20.0"
+        if 'stop_loss' not in config['AJUSTES']:
+            config['AJUSTES']['stop_loss'] = "10.0"
+        if 'estrategia' not in config['AJUSTES']:
+            config['AJUSTES']['estrategia'] = "MHI"
+        if 'ativo' not in config['AJUSTES']:
+            config['AJUSTES']['ativo'] = ""
+        if 'analise_medias' not in config['AJUSTES']:
+            config['AJUSTES']['analise_medias'] = "N"
+        if 'velas_medias' not in config['AJUSTES']:
+            config['AJUSTES']['velas_medias'] = "20"
+        
+        # MARTINGALE
+        if 'usar' not in config['MARTINGALE']:
+            config['MARTINGALE']['usar'] = "N"
+        if 'niveis' not in config['MARTINGALE']:
+            config['MARTINGALE']['niveis'] = "1"
+        if 'fator' not in config['MARTINGALE']:
+            config['MARTINGALE']['fator'] = "2.0"
+        
+        # SOROS
+        if 'usar' not in config['SOROS']:
+            config['SOROS']['usar'] = "N"
+        if 'niveis' not in config['SOROS']:
+            config['SOROS']['niveis'] = "1"
+        
+        # Salvar configurações atualizadas
+        config.write()
+        
+        return config
+    except Exception as e:
+        st.error(f"Erro ao carregar configurações: {str(e)}")
+        # Criar configuração padrão em caso de erro
+        config = ConfigObj()
+        config['LOGIN'] = {'email': "", 'senha': ""}
+        config['AJUSTES'] = {
+            'tipo': "automatico", 
+            'valor_entrada': "2.0", 
+            'stop_win': "20.0", 
+            'stop_loss': "10.0",
+            'estrategia': "MHI",
+            'ativo': "",
+            'analise_medias': "N",
+            'velas_medias': "20"
+        }
+        config['MARTINGALE'] = {'usar': "N", 'niveis': "1", 'fator': "2.0"}
+        config['SOROS'] = {'usar': "N", 'niveis': "1"}
+        
+        try:
+            config.filename = 'config.txt'
+            config.write()
+        except:
+            pass
+        
+        return config
+
+# -----------------------------------------------------------------------------
+# Função para tentar reconectar à API com várias tentativas
+def reconectar_api(api, max_tentativas=3, intervalo=5):
+    """Tenta reconectar à API com várias tentativas"""
+    for tentativa in range(1, max_tentativas + 1):
+        try:
+            log_message(f"Tentativa de reconexão {tentativa}/{max_tentativas}...")
+            check, reason = api.connect()
+            if check:
+                log_message("Reconexão bem-sucedida!")
+                return True
+            else:
+                log_message(f"Falha na reconexão: {reason}")
+                time.sleep(intervalo)
+        except Exception as e:
+            log_message(f"Erro durante a reconexão: {str(e)}")
+            time.sleep(intervalo)
+    
+    log_message("Todas as tentativas de reconexão falharam")
+    return False
+
+# Função para verificar se o ativo está disponível com tratamento de erros
+def verificar_ativo_disponivel(api, ativo, tipo="binary"):
+    """Verifica se o ativo está disponível com tratamento de erros"""
+    max_tentativas = 3
+    
+    for tentativa in range(1, max_tentativas + 1):
+        try:
+            ativo_aberto = api.get_all_open_time()
+            
+            # Verificar se o ativo existe no dicionário
+            if tipo not in ativo_aberto:
+                log_message(f"Tipo de operação '{tipo}' não disponível")
+                return False
+                
+            if ativo not in ativo_aberto[tipo]:
+                log_message(f"Ativo '{ativo}' não encontrado para o tipo '{tipo}'")
+                return False
+                
+            # Verificar se o ativo está aberto
+            if not ativo_aberto[tipo][ativo]['open']:
+                log_message(f"Ativo '{ativo}' está fechado no momento")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            log_message(f"Erro ao verificar disponibilidade do ativo (tentativa {tentativa}/{max_tentativas}): {str(e)}")
+            
+            if tentativa < max_tentativas:
+                time.sleep(2)
+            else:
+                log_message("Falha ao verificar disponibilidade do ativo após várias tentativas")
+                return False
+    
+    return False
+
+# Função para parada segura do bot
+def parar_bot_seguro():
+    """Para o bot de forma segura, garantindo que recursos sejam liberados"""
+    global BOT_RUNNING
+    
+    log_message("Iniciando parada segura do bot...")
+    
+    # Sinalizar que o bot deve parar
+    BOT_RUNNING = False
+    
+    # Adicionar aqui qualquer limpeza adicional necessária
+    log_message("Bot parado com segurança")
+
+# -----------------------------------------------------------------------------
 # Sidebar – Configuração e Login
 st.sidebar.markdown("<h2 style='text-align: center; background: linear-gradient(90deg, #0078ff, #00bfff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 600; margin-bottom: 20px;'> Configuração e Login</h2>", unsafe_allow_html=True)
 
@@ -446,29 +644,24 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.sidebar.expander("", expanded=True):
+with st.sidebar.expander("Credenciais IQ Option", expanded=True):
     email = st.text_input("Email", value="", key="email", placeholder="Seu email na IQ Option")
     senha = st.text_input("Senha", type="password", key="senha", placeholder="Sua senha")
     conta = st.selectbox("Conta", ["Demo", "Real"], key="conta")
 
-with st.sidebar.expander("", expanded=True):
+with st.sidebar.expander("Configurações de Operação", expanded=True):
     tipo = st.selectbox("Tipo de Operação", ["automatico", "digital", "binary"], key="tipo", 
                         help="Escolha o tipo de operação a ser realizada")
     
     col1, col2 = st.columns(2)
     with col1:
-        valor_entrada = st.number_input("Valor de Entrada", value=1.0, key="valor_entrada", 
-                                      min_value=1.0, format="%.2f")
+        valor_entrada = st.number_input("Valor Entrada", value=2.0, step=0.5, format="%.2f", key="valor_entrada")
+        stop_loss = st.number_input("Stop Loss", value=10.0, step=1.0, format="%.2f", key="stop_loss")
     with col2:
-        stop_win = st.number_input("Stop Win", value=10.0, key="stop_win", 
-                                 min_value=0.0, format="%.2f")
-    
-    col3, col4 = st.columns(2)
-    with col3:
-        stop_loss = st.number_input("Stop Loss", value=5.0, key="stop_loss", 
-                                  min_value=0.0, format="%.2f")
+        stop_win = st.number_input("Stop Win", value=20.0, step=1.0, format="%.2f", key="stop_win")
+        analise_medias = st.selectbox("Análise Médias", ["N", "S"], key="analise_medias", 
+                                    help="Usar análise de médias móveis para confirmar tendência")
 
-with st.sidebar.expander("", expanded=False):
     usar_martingale = st.checkbox("Usar Martingale", value=False, key="usar_martingale")
     if usar_martingale:
         col1, col2 = st.columns(2)
@@ -480,16 +673,15 @@ with st.sidebar.expander("", expanded=False):
         niveis_martingale = 0
         fator_martingale = 0.0
 
-with st.sidebar.expander("", expanded=False):
+with st.sidebar.expander("Configurações de Soros", expanded=False):
     usar_soros = st.checkbox("Usar Soros", value=False, key="usar_soros")
     if usar_soros:
         niveis_soros = st.number_input("Níveis de Soros", value=1, step=1, key="niveis_soros", min_value=1)
     else:
         niveis_soros = 0
 
-with st.sidebar.expander("", expanded=False):
-    analise_medias = st.selectbox("Análise de Médias", ["S", "N"], key="analise_medias")
-    velas_medias = st.number_input("Número de Velas para Médias", value=3, step=1, key="velas_medias", min_value=1)
+with st.sidebar.expander("Configurações de Análise", expanded=False):
+    velas_medias = st.number_input("Número de Velas para Médias", value=20, step=1, key="velas_medias", min_value=3)
 
 # Adiciona informações na parte inferior da sidebar
 st.sidebar.markdown("""
@@ -500,7 +692,7 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-if st.sidebar.button("", use_container_width=True, key="salvar_config"):
+if st.sidebar.button("Salvar Configurações", use_container_width=True, key="salvar_config"):
     # Obtém a estratégia e ativo selecionados (se disponíveis)
     estrategia = st.session_state.get("estrategia_choice", "MHI")
     ativo = st.session_state.get("ativo_input", "")
@@ -590,7 +782,7 @@ with st.container():
     </div>
     """, unsafe_allow_html=True)
     
-    if st.button("", use_container_width=True, key="conectar"):
+    if st.button("Conectar à IQ Option", use_container_width=True, key="conectar"):
         try:
             with st.spinner("Conectando à IQ Option..."):
                 st.session_state.API = IQ_Option(email, senha)
@@ -638,7 +830,7 @@ if "API" in st.session_state:
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            if st.button("", use_container_width=True, key="executar_catalogador"):
+            if st.button("Executar Catalogador", use_container_width=True, key="executar_catalogador"):
                 try:
                     with st.spinner("Executando catalogador..."):
                         lista_catalog, linha = catag(st.session_state.API)
@@ -656,10 +848,10 @@ if "API" in st.session_state:
         
         with col2:
             estrategia_choice = st.selectbox(
-                "",
-                ["MHI", "", ""],
+                "Selecione a Estratégia",
+                ["MHI", "Torres Gêmeas", "MHI M5"],
                 key="estrategia_choice",
-                help=""
+                help="Escolha a estratégia de operação"
             )
         
         # Exibição dos resultados do catalogador
@@ -674,10 +866,11 @@ if "API" in st.session_state:
                 default_ativo = ativos[0] if ativos else ""
                 
                 st.markdown("<p style='margin-top:15px;'><b></b></p>", unsafe_allow_html=True)
-                ativo_input = st.selectbox("", ativos, index=0) if ativos else st.text_input("", value=default_ativo)
+                st.markdown("<p style='margin-top: 10px; font-weight: bold;'>Selecione ou digite o ativo:</p>", unsafe_allow_html=True)
+                ativo_input = st.selectbox("Selecione o Ativo", ativos, index=0) if ativos else st.text_input("Digite o Ativo", value=default_ativo)
                 
                 # Botão para salvar a estratégia e ativo selecionados
-                if st.button("", use_container_width=True, key="salvar_estrategia"):
+                if st.button("Salvar Estratégia e Ativo", use_container_width=True, key="salvar_estrategia"):
                     # Atualiza o arquivo de configuração
                     try:
                         # Lê a configuração existente ou cria uma nova
@@ -716,7 +909,7 @@ def run_bot(api):
     global BOT_RUNNING
     
     # Obtém as configurações
-    config = ConfigObj('config.txt')
+    config = carregar_configuracoes_seguras()
     
     # Parâmetros
     valor_entrada = float(config['AJUSTES']['valor_entrada'])
@@ -1006,15 +1199,22 @@ def run_bot(api):
     
     # Função para verificar stop win/loss
     def check_stop():
-        if lucro_atual <= float('-'+str(abs(stop_loss))):
-            log_message(f"STOP LOSS BATIDO {cifrao}{lucro_atual:.2f}")
-            return False
-        
-        if lucro_atual >= float(abs(stop_win)):
-            log_message(f"STOP WIN BATIDO {cifrao}{lucro_atual:.2f}")
-            return False
-        
-        return True
+        try:
+            if lucro_atual <= float('-'+str(abs(stop_loss))):
+                log_message(f"STOP LOSS BATIDO {cifrao}{lucro_atual:.2f}")
+                parar_bot_seguro()
+                return False
+            
+            if lucro_atual >= float(abs(stop_win)):
+                log_message(f"STOP WIN BATIDO {cifrao}{lucro_atual:.2f}")
+                parar_bot_seguro()
+                return False
+            
+            return True
+        except Exception as e:
+            log_message(f"Erro ao verificar stop: {str(e)}")
+            # Em caso de erro, retorna True para não interromper o bot por falha no check
+            return True
     
     # Loop principal do bot
     while BOT_RUNNING:
@@ -1029,7 +1229,10 @@ def run_bot(api):
                 check_open = api.check_connect()
                 if not check_open:
                     log_message("Reconectando à IQ Option...")
-                    api.connect()
+                    if not reconectar_api(api):
+                        log_message("Falha na reconexão. Parando o bot.")
+                        BOT_RUNNING = False
+                        break
                     time.sleep(5)
                     continue
             except Exception as e:
@@ -1040,9 +1243,8 @@ def run_bot(api):
             # Verificar se o ativo está disponível
             try:
                 if ativo:
-                    ativo_aberto = api.get_all_open_time()
-                    if ativo not in ativo_aberto['binary'] or not ativo_aberto['binary'][ativo]['open']:
-                        log_message(f"Ativo {ativo} não está disponível no momento")
+                    if not verificar_ativo_disponivel(api, ativo, tipo):
+                        log_message(f"Ativo '{ativo}' não está disponível no momento")
                         time.sleep(30)
                         continue
                 else:
@@ -1285,7 +1487,7 @@ if "API" in st.session_state:
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("", use_container_width=True, key="iniciar_bot"):
+        if st.button("Iniciar Operações Automatizadas", use_container_width=True, key="iniciar_bot"):
             # Efeito de animação ao iniciar o bot
             with st.spinner("Iniciando operações..."):
                 st.markdown("""
@@ -1298,52 +1500,59 @@ if "API" in st.session_state:
                 """, unsafe_allow_html=True)
                 time.sleep(2)  # Pequena pausa para efeito visual
             
-            BOT_RUNNING = True
-            # Captura a API em uma variável local para uso na thread
-            api_instance = st.session_state.API
+            # Verificar configurações antes de iniciar o bot
+            erros = validar_configuracoes()
+            if erros:
+                st.error("Configurações inválidas:")
+                for erro in erros:
+                    st.error(erro)
+            else:
+                BOT_RUNNING = True
+                # Captura a API em uma variável local para uso na thread
+                api_instance = st.session_state.API
 
-            # Configuração para suprimir avisos na thread
-            def run_bot_with_warnings_suppressed(api):
-                # Solução mais robusta para suprimir avisos
-                import sys
-                import os
-                import logging
-                import warnings
-                
-                # Desativar completamente todos os warnings do Python
-                warnings.simplefilter("ignore")
-                os.environ["PYTHONWARNINGS"] = "ignore"
-                
-                # Desativar todos os logs do Streamlit
-                for logger_name in logging.Logger.manager.loggerDict:
-                    if 'streamlit' in logger_name:
-                        logging.getLogger(logger_name).setLevel(logging.CRITICAL)
-                        logging.getLogger(logger_name).propagate = False
-                        logging.getLogger(logger_name).disabled = True
-                
-                # Redirecionar stderr para um arquivo nulo
-                class NullWriter:
-                    def write(self, text):
-                        pass
-                    def flush(self):
-                        pass
-                
-                # Salvar stderr original
-                original_stderr = sys.stderr
-                
-                try:
-                    # Redirecionar stderr para evitar mensagens de aviso
-                    sys.stderr = NullWriter()
+                # Configuração para suprimir avisos na thread
+                def run_bot_with_warnings_suppressed(api):
+                    # Solução mais robusta para suprimir avisos
+                    import sys
+                    import os
+                    import logging
+                    import warnings
                     
-                    # Chamar a função real do bot
-                    run_bot(api)
-                finally:
-                    # Restaurar stderr original
-                    sys.stderr = original_stderr
+                    # Desativar completamente todos os warnings do Python
+                    warnings.simplefilter("ignore")
+                    os.environ["PYTHONWARNINGS"] = "ignore"
+                    
+                    # Desativar todos os logs do Streamlit
+                    for logger_name in logging.Logger.manager.loggerDict:
+                        if 'streamlit' in logger_name:
+                            logging.getLogger(logger_name).setLevel(logging.CRITICAL)
+                            logging.getLogger(logger_name).propagate = False
+                            logging.getLogger(logger_name).disabled = True
+                    
+                    # Redirecionar stderr para um arquivo nulo
+                    class NullWriter:
+                        def write(self, text):
+                            pass
+                        def flush(self):
+                            pass
+                    
+                    # Salvar stderr original
+                    original_stderr = sys.stderr
+                    
+                    try:
+                        # Redirecionar stderr para evitar mensagens de aviso
+                        sys.stderr = NullWriter()
+                        
+                        # Chamar a função real do bot
+                        run_bot(api)
+                    finally:
+                        # Restaurar stderr original
+                        sys.stderr = original_stderr
 
-            # Inicia a thread do bot com supressão de avisos
-            bot_thread = threading.Thread(target=run_bot_with_warnings_suppressed, args=(api_instance,), daemon=True)
-            bot_thread.start()
+                # Inicia a thread do bot com supressão de avisos
+                bot_thread = threading.Thread(target=run_bot_with_warnings_suppressed, args=(api_instance,), daemon=True)
+                bot_thread.start()
 
     st.markdown("<h3 class='sub-header'> Dashboard de Resultados</h3>", unsafe_allow_html=True)
     
