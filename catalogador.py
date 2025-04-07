@@ -32,6 +32,7 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
         API: Objeto da API IQ Option
         tipo_par: String indicando a preferência de tipo de par
                   "Automático (Prioriza OTC)" - Prioriza OTC, mas usa normais se OTC não estiver disponível
+                  "Automático (Todos os Pares)" - Retorna todos os pares disponíveis (OTC e normais)
                   "Apenas OTC" - Retorna apenas pares OTC
                   "Apenas Normais" - Retorna apenas pares normais
     """
@@ -46,7 +47,12 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
             'USDJPY',
             'AUDUSD',
             'EURJPY',
-            'NZDUSD'
+            'NZDUSD',
+            'AUDJPY',
+            'EURAUD',
+            'GBPCAD',
+            'EURCAD',
+            'USDCAD'
         ]
         
         # Cria as versões OTC dos pares
@@ -60,7 +66,7 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
         pares_otc_abertos = []
         
         # Verifica pares normais se necessário
-        if tipo_par in ["Automático (Prioriza OTC)", "Apenas Normais"]:
+        if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas Normais"]:
             for par in pares_base:
                 try:
                     if par in all_asset['binary'] and all_asset['binary'][par]['open']:
@@ -69,7 +75,7 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
                     pass
         
         # Verifica pares OTC se necessário
-        if tipo_par in ["Automático (Prioriza OTC)", "Apenas OTC"]:
+        if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas OTC"]:
             for par in pares_otc:
                 try:
                     if par in all_asset['binary'] and all_asset['binary'][par]['open']:
@@ -87,6 +93,10 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
             # Se não houver pares OTC, usamos os pares normais
             elif len(pares_normais_abertos) > 0:
                 pares_disponiveis.extend(pares_normais_abertos)
+        elif tipo_par == "Automático (Todos os Pares)":
+            # Usa todos os pares disponíveis (OTC e normais)
+            pares_disponiveis.extend(pares_otc_abertos)
+            pares_disponiveis.extend(pares_normais_abertos)
         elif tipo_par == "Apenas OTC":
             pares_disponiveis.extend(pares_otc_abertos)
         elif tipo_par == "Apenas Normais":
@@ -284,26 +294,47 @@ def reconectar_api(API):
     raise Exception("Falha crítica ao reconectar com a API")
 
 def catag(API, tipo_par="Automático (Prioriza OTC)"):
-    config = ConfigObj('config.txt')
-    
-    # Se não foi passado um tipo_par, tenta ler da configuração
-    if tipo_par == "Automático (Prioriza OTC)" and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
-        tipo_par = config['AJUSTES']['tipo_par']
-    
-    pares = obter_pares_abertos(API, tipo_par)
-    resultados = obter_resultados(API, pares)
-    
-    if not resultados or len(resultados) == 0:
-        print("❌ Nenhum resultado obtido na catalogação.")
+    try:
+        config = ConfigObj('config.txt')
+        
+        # Se não foi passado um tipo_par, tenta ler da configuração
+        if tipo_par == "Automático (Prioriza OTC)" and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
+            tipo_par = config['AJUSTES']['tipo_par']
+        
+        # Se o tipo de par for "Automático (Todos os Pares)", usamos diretamente
+        if tipo_par == "Automático (Todos os Pares)":
+            pares = obter_pares_abertos(API, tipo_par)
+        else:
+            # Tentativa com o tipo de par especificado
+            pares = obter_pares_abertos(API, tipo_par)
+            
+            # Se não encontrou pares, tenta com "Automático (Todos os Pares)"
+            if not pares or len(pares) == 0:
+                print(f"⚠️ Nenhum par encontrado com {tipo_par}. Tentando com todos os pares disponíveis...")
+                pares = obter_pares_abertos(API, "Automático (Todos os Pares)")
+        
+        # Se ainda não temos pares, não podemos continuar
+        if not pares or len(pares) == 0:
+            print("❌ Não foi possível encontrar nenhum par disponível para negociação.")
+            return [], 2
+        
+        print(f"✅ Iniciando análise com {len(pares)} pares: {pares}")
+        resultados = obter_resultados(API, pares)
+        
+        if not resultados or len(resultados) == 0:
+            print("❌ Nenhum resultado obtido na catalogação.")
+            return [], 2
+            
+        if config['MARTINGALE']['usar'] == 'S':
+            linha = 2 + int(config['MARTINGALE']['niveis'])
+        else:
+            linha = 2
+            
+        resultados_ordenados = sorted(resultados, key=lambda x: x[linha], reverse=True)
+        return resultados_ordenados, linha
+    except Exception as e:
+        print(f"❌ Erro na catalogação: {str(e)}")
         return [], 2
-        
-    if config['MARTINGALE']['usar'] == 'S':
-        linha = 2 + int(config['MARTINGALE']['niveis'])
-    else:
-        linha = 2
-        
-    resultados_ordenados = sorted(resultados, key=lambda x: x[linha], reverse=True)
-    return resultados_ordenados, linha
 
 # ============================
 # EXECUÇÃO PRINCIPAL

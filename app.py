@@ -504,48 +504,64 @@ def run_catalogador(api):
         
         log_message(f"Tipo de par selecionado: {tipo_par}", "info")
         
-        # Verifica a disponibilidade de pares antes de executar o catalogador
+        # Executa o catalogador com a opção "Automático (Todos os Pares)"
+        # Isso garante que todos os pares disponíveis serão considerados
+        log_message("Buscando todos os pares disponíveis (OTC e normais)...", "info")
+        
         try:
-            # Modificação para buscar todos os pares disponíveis independentemente do tipo
-            pares_otc = obter_pares_abertos(api, "Apenas OTC")
-            pares_normais = obter_pares_abertos(api, "Apenas Normais")
+            # Executa a catalogação com todos os pares disponíveis
+            resultados, linha = catag(api, "Automático (Todos os Pares)")
             
-            # Combina todos os pares disponíveis
-            todos_pares = list(set(pares_otc + pares_normais))
-            
-            if not todos_pares or len(todos_pares) == 0:
-                log_message("Nenhum par disponível para negociação no momento.", "warning")
-                return None, 0
-            else:
-                log_message(f"Encontrados {len(todos_pares)} pares disponíveis: {', '.join(todos_pares)}", "success")
+            if not resultados or len(resultados) == 0:
+                log_message("Nenhum resultado obtido na catalogação. Verificando disponibilidade de pares...", "warning")
                 
-                if len(pares_otc) > 0:
+                # Verifica manualmente a disponibilidade de pares
+                pares_otc = obter_pares_abertos(api, "Apenas OTC")
+                pares_normais = obter_pares_abertos(api, "Apenas Normais")
+                
+                if pares_otc and len(pares_otc) > 0:
+                    log_message(f"Pares OTC disponíveis: {', '.join(pares_otc)}", "info")
+                else:
+                    log_message("Nenhum par OTC disponível no momento.", "warning")
+                
+                if pares_normais and len(pares_normais) > 0:
+                    log_message(f"Pares normais disponíveis: {', '.join(pares_normais)}", "info")
+                else:
+                    log_message("Nenhum par normal disponível no momento.", "warning")
+                
+                if (not pares_otc or len(pares_otc) == 0) and (not pares_normais or len(pares_normais) == 0):
+                    log_message("Nenhum par disponível para negociação. Verifique se o mercado está aberto.", "error")
+                else:
+                    log_message("Pares disponíveis encontrados, mas a catalogação falhou. Verifique o log para mais detalhes.", "error")
+                
+                return None, 0
+            
+            st.session_state.catalog_results = resultados
+            st.session_state.catalog_line = linha
+            
+            log_message(f"Catalogação concluída com sucesso. Encontrados {len(resultados)} resultados.", "success")
+            return resultados, linha
+            
+        except Exception as e:
+            log_message(f"Erro durante a catalogação: {str(e)}", "error")
+            
+            # Tenta obter informações sobre pares disponíveis para diagnóstico
+            try:
+                pares_otc = obter_pares_abertos(api, "Apenas OTC")
+                pares_normais = obter_pares_abertos(api, "Apenas Normais")
+                
+                if pares_otc and len(pares_otc) > 0:
                     log_message(f"Pares OTC disponíveis: {len(pares_otc)}", "info")
-                if len(pares_normais) > 0:
+                if pares_normais and len(pares_normais) > 0:
                     log_message(f"Pares normais disponíveis: {len(pares_normais)}", "info")
                 
-                # Usa todos os pares disponíveis para catalogação
-                pares_disponiveis = todos_pares
-        except Exception as e:
-            log_message(f"Erro ao verificar pares disponíveis: {str(e)}", "error")
-            pares_disponiveis = []
-        
-        if not pares_disponiveis or len(pares_disponiveis) == 0:
-            log_message("Nenhum par disponível para catalogação. Verifique se o mercado está aberto.", "error")
-            return None, 0
-        
-        # Executa o catalogador com todos os pares disponíveis
-        resultados, linha = catag(api, "Automático (Todos os Pares)")
-        
-        if not resultados or len(resultados) == 0:
-            log_message("Nenhum resultado obtido na catalogação. Verifique se há pares disponíveis.", "error")
+                if (not pares_otc or len(pares_otc) == 0) and (not pares_normais or len(pares_normais) == 0):
+                    log_message("Nenhum par disponível para negociação. Verifique se o mercado está aberto.", "error")
+            except:
+                log_message("Não foi possível verificar a disponibilidade de pares.", "error")
+            
             return None, 0
             
-        st.session_state.catalog_results = resultados
-        st.session_state.catalog_line = linha
-        
-        log_message(f"Catalogação concluída. Encontrados {len(resultados)} resultados.", "success")
-        return resultados, linha
     except Exception as e:
         log_message(f"Erro ao executar catalogação: {str(e)}", "error")
         return None, 0
@@ -1155,16 +1171,18 @@ with st.sidebar:
         tipo_par = st.selectbox(
             "Tipo de Par", 
             [
+                "Automático (Todos os Pares)",
                 "Automático (Prioriza OTC)", 
                 "Apenas OTC", 
                 "Apenas Normais"
             ], 
             index=0 if not config or 'AJUSTES' not in config or 'tipo_par' not in config['AJUSTES'] else 
                   [
+                      "Automático (Todos os Pares)",
                       "Automático (Prioriza OTC)", 
                       "Apenas OTC", 
                       "Apenas Normais"
-                  ].index(config['AJUSTES']['tipo_par'])
+                  ].index(config['AJUSTES']['tipo_par'] if config['AJUSTES']['tipo_par'] in ["Automático (Todos os Pares)", "Automático (Prioriza OTC)", "Apenas OTC", "Apenas Normais"] else "Automático (Todos os Pares)")
         )
     
     # Seção de Martingale
