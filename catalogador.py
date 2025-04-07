@@ -26,94 +26,229 @@ logging.getLogger("iqoptionapi").addFilter(GetCandlesFilter())
 def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
     """
     Obtém os pares disponíveis para negociação, verificando tanto pares OTC quanto normais.
-    Dependendo do dia da semana e horário, retorna os pares apropriados.
     
     Args:
         API: Objeto da API IQ Option
         tipo_par: String indicando a preferência de tipo de par
-                  "Automático (Prioriza OTC)" - Prioriza OTC, mas usa normais se OTC não estiver disponível
-                  "Automático (Todos os Pares)" - Retorna todos os pares disponíveis (OTC e normais)
-                  "Apenas OTC" - Retorna apenas pares OTC
-                  "Apenas Normais" - Retorna apenas pares normais
+    
+    Returns:
+        list: Lista de pares disponíveis para negociação
+        str: Mensagem de erro em caso de falha
     """
     try:
-        # Lista de pares que queremos monitorar (tanto OTC quanto normais)
+        if not API:
+            return [], "API não inicializada"
+            
+        # Verifica se a API está conectada
+        try:
+            check = API.check_connect()
+            if not check:
+                API = reconectar_api(API)
+        except:
+            API = reconectar_api(API)
+        
+        # Lista de pares para monitorar
         pares_base = [
-            'EURUSD',
-            'EURGBP',
-            'USDCHF',
-            'GBPUSD',
-            'GBPJPY',
-            'USDJPY',
-            'AUDUSD',
-            'EURJPY',
-            'NZDUSD',
-            'AUDJPY',
-            'EURAUD',
-            'GBPCAD',
-            'EURCAD',
-            'USDCAD'
+            'EURUSD', 'EURGBP', 'USDCHF', 'GBPUSD', 'GBPJPY', 'USDJPY',
+            'AUDUSD', 'EURJPY', 'NZDUSD', 'AUDJPY', 'EURAUD', 'GBPCAD',
+            'EURCAD', 'USDCAD'
         ]
         
         # Cria as versões OTC dos pares
         pares_otc = [f"{par}-OTC" for par in pares_base]
         
-        # Obtém todos os pares disponíveis da API
-        all_asset = API.get_all_open_time()
+        # Obtém todos os pares disponíveis da API com retry
+        max_tentativas = 3
+        tentativa = 0
+        all_asset = None
+        
+        while tentativa < max_tentativas and not all_asset:
+            try:
+                print(f"\nTentativa {tentativa + 1} de obter ativos...")
+                all_asset = API.get_all_open_time()
+                
+                if not all_asset:
+                    raise Exception("API retornou dados vazios")
+                
+                if not isinstance(all_asset, dict):
+                    raise Exception(f"API retornou tipo inesperado: {type(all_asset)}")
+                
+                print("✅ Dados de ativos obtidos")
+                print(f"Tipos disponíveis: {list(all_asset.keys())}")
+                
+                # Verifica se temos acesso aos dados binários
+                if 'binary' not in all_asset:
+                    raise Exception("Dados binários não disponíveis")
+                
+                # Verifica se há algum ativo disponível
+                ativos_disponiveis = False
+                for tipo in all_asset:
+                    if all_asset[tipo] and len(all_asset[tipo]) > 0:
+                        ativos_disponiveis = True
+                        break
+                
+                if not ativos_disponiveis:
+                    raise Exception("Nenhum ativo disponível em nenhuma categoria")
+                
+            except Exception as e:
+                tentativa += 1
+                print(f"❌ Erro ao obter ativos (tentativa {tentativa}): {str(e)}")
+                if tentativa < max_tentativas:
+                    time.sleep(2)
+                    try:
+                        API = reconectar_api(API)
+                    except:
+                        pass
+                else:
+                    return [], f"Falha ao obter ativos após {max_tentativas} tentativas: {str(e)}"
         
         # Verifica quais pares estão abertos para negociação binária
         pares_normais_abertos = []
         pares_otc_abertos = []
         
-        # Verifica pares normais se necessário
+        # Debug: Mostra todos os ativos disponíveis
+        print("\nAtivos binários disponíveis:")
+        for ativo, info in all_asset['binary'].items():
+            status = "✅ Aberto" if info.get('open', False) else "❌ Fechado"
+            print(f"{ativo}: {status}")
+        
+        # Verifica pares normais
         if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas Normais"]:
             for par in pares_base:
                 try:
-                    if par in all_asset['binary'] and all_asset['binary'][par]['open']:
-                        pares_normais_abertos.append(par)
-                except:
-                    pass
+                    if par in all_asset['binary']:
+                        info = all_asset['binary'][par]
+                        if isinstance(info, dict) and info.get('open', False):
+                            pares_normais_abertos.append(par)
+                            print(f"✅ Par normal disponível: {par}")
+                        else:
+                            print(f"❌ Par normal indisponível: {par}")
+                    else:
+                        print(f"❓ Par normal não encontrado: {par}")
+                except Exception as e:
+                    print(f"⚠️ Erro ao verificar par {par}: {str(e)}")
         
-        # Verifica pares OTC se necessário
+        # Verifica pares OTC
         if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas OTC"]:
             for par in pares_otc:
                 try:
-                    if par in all_asset['binary'] and all_asset['binary'][par]['open']:
-                        pares_otc_abertos.append(par)
-                except:
-                    pass
+                    if par in all_asset['binary']:
+                        info = all_asset['binary'][par]
+                        if isinstance(info, dict) and info.get('open', False):
+                            pares_otc_abertos.append(par)
+                            print(f"✅ Par OTC disponível: {par}")
+                        else:
+                            print(f"❌ Par OTC indisponível: {par}")
+                    else:
+                        print(f"❓ Par OTC não encontrado: {par}")
+                except Exception as e:
+                    print(f"⚠️ Erro ao verificar par OTC {par}: {str(e)}")
         
-        # Lógica de seleção baseada na preferência do usuário
+        # Seleciona os pares conforme a preferência
         pares_disponiveis = []
         
         if tipo_par == "Automático (Prioriza OTC)":
-            # Se tivermos pares OTC disponíveis, usamos eles preferencialmente
-            if len(pares_otc_abertos) > 0:
-                pares_disponiveis.extend(pares_otc_abertos)
-            # Se não houver pares OTC, usamos os pares normais
-            elif len(pares_normais_abertos) > 0:
-                pares_disponiveis.extend(pares_normais_abertos)
+            if pares_otc_abertos:
+                pares_disponiveis = pares_otc_abertos
+                print(f"\n✅ Usando {len(pares_otc_abertos)} pares OTC")
+            elif pares_normais_abertos:
+                pares_disponiveis = pares_normais_abertos
+                print(f"\n✅ Usando {len(pares_normais_abertos)} pares normais")
         elif tipo_par == "Automático (Todos os Pares)":
-            # Usa todos os pares disponíveis (OTC e normais)
-            pares_disponiveis.extend(pares_otc_abertos)
-            pares_disponiveis.extend(pares_normais_abertos)
+            pares_disponiveis = pares_otc_abertos + pares_normais_abertos
+            print(f"\n✅ Usando todos os {len(pares_disponiveis)} pares disponíveis")
         elif tipo_par == "Apenas OTC":
-            pares_disponiveis.extend(pares_otc_abertos)
+            pares_disponiveis = pares_otc_abertos
+            print(f"\n✅ Usando {len(pares_otc_abertos)} pares OTC")
         elif tipo_par == "Apenas Normais":
-            pares_disponiveis.extend(pares_normais_abertos)
+            pares_disponiveis = pares_normais_abertos
+            print(f"\n✅ Usando {len(pares_normais_abertos)} pares normais")
         
-        # Se não houver nenhum par disponível, retorna uma lista vazia
-        if len(pares_disponiveis) == 0:
-            print(f"⚠️ Nenhum par {tipo_par.lower()} disponível para negociação no momento.")
-            return []
-            
-        print(f"✅ Pares disponíveis ({tipo_par}): {pares_disponiveis}")
-        return pares_disponiveis
+        if not pares_disponiveis:
+            return [], f"Nenhum par disponível para o tipo {tipo_par}"
+        
+        print(f"\nPares disponíveis para operação: {', '.join(pares_disponiveis)}")
+        return pares_disponiveis, None
         
     except Exception as e:
-        print(f"❌ Erro ao obter pares abertos: {str(e)}")
-        # Em caso de erro, retorna uma lista vazia
-        return []
+        print(f"❌ Erro crítico ao obter pares: {str(e)}")
+        return [], f"Erro ao obter pares: {str(e)}"
+
+def reconectar_api(API):
+    """
+    Reconecta com a API IQ Option com tratamento de erros aprimorado.
+    
+    Args:
+        API: Objeto da API IQ Option
+    
+    Returns:
+        IQ_Option: Nova instância da API conectada
+    """
+    config = ConfigObj('config.txt')
+    max_tentativas = 3
+    
+    try:
+        if API:
+            try:
+                API.close()
+                print("Conexão anterior fechada com sucesso")
+            except:
+                print("Aviso: Não foi possível fechar a conexão anterior")
+    except:
+        pass
+    
+    time.sleep(2)
+    print("\nIniciando nova conexão...")
+    
+    for tentativa in range(max_tentativas):
+        try:
+            API = IQ_Option(config['LOGIN']['email'], config['LOGIN']['senha'])
+            check, reason = API.connect()
+            
+            if check:
+                print("✅ Conectado com sucesso!")
+                
+                # Verifica se a API está realmente conectada
+                try:
+                    perfil = API.get_profile_ansyc()
+                    if not perfil:
+                        raise Exception("Não foi possível obter o perfil")
+                    print(f"✅ Perfil verificado: {perfil.get('name', 'Unknown')}")
+                except Exception as e:
+                    print(f"⚠️ Aviso: Erro ao verificar perfil: {str(e)}")
+                
+                # Tenta mudar para conta demo
+                try:
+                    API.change_balance('PRACTICE')
+                    print("✅ Conta DEMO selecionada")
+                except Exception as e:
+                    print(f"⚠️ Aviso: Erro ao mudar para conta DEMO: {str(e)}")
+                
+                # Verifica se consegue obter os ativos
+                try:
+                    all_asset = API.get_all_open_time()
+                    if not all_asset:
+                        raise Exception("Não foi possível obter lista de ativos")
+                    print("✅ Lista de ativos verificada")
+                except Exception as e:
+                    print(f"⚠️ Aviso: Erro ao verificar ativos: {str(e)}")
+                
+                time.sleep(1)
+                return API
+            else:
+                print(f"❌ Tentativa {tentativa + 1}/{max_tentativas}: Falha ao conectar: {reason}")
+                if "invalid_credentials" in str(reason).lower():
+                    raise Exception("Credenciais inválidas")
+                time.sleep(3)
+        except Exception as e:
+            print(f"❌ Erro na tentativa {tentativa + 1}: {str(e)}")
+            if tentativa < max_tentativas - 1:
+                print("Tentando novamente em 3 segundos...")
+                time.sleep(3)
+            else:
+                raise Exception(f"Falha crítica ao reconectar com a API: {str(e)}")
+    
+    raise Exception("Falha crítica ao reconectar com a API após todas as tentativas")
 
 def analisar_velas(velas, tipo_estrategia):
     resultados = {'doji': 0, 'win': 0, 'loss': 0, 'gale1': 0, 'gale2': 0}
@@ -354,163 +489,96 @@ def obter_resultados(API, pares):
         
         return resultados
     
-    print(f"✅ Análise concluída com {len(resultados)} resultados de {pares_analisados} pares e {estrategias_analisadas} estratégias.")
+    print(f"✅ Análise concluída com sucesso! {len(resultados)} resultados de {pares_analisados} pares e {estrategias_analisadas} estratégias.")
     return resultados
 
-def reconectar_api(API):
-    config = ConfigObj('config.txt')
-    try:
-        API.close()
-    except:
-        pass
-    time.sleep(2)
-    API = IQ_Option(config['LOGIN']['email'], config['LOGIN']['senha'])
-    for i in range(3):
-        try:
-            conectado, erro = API.connect()
-            if conectado:
-                API.change_balance('PRACTICE')
-                time.sleep(1)
-                return API
-            else:
-                print(f"Tentativa {i+1}/3: Falha ao reconectar: {erro}")
-                time.sleep(3)
-        except Exception as e:
-            print(f"Erro de conexão: {str(e)}")
-            time.sleep(3)
-    raise Exception("Falha crítica ao reconectar com a API")
-
 def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
-    tentativas = 0
+    """
+    Função principal de catalogação de ativos.
+    
+    Args:
+        API: Objeto da API IQ Option
+        tipo_par: Tipo de par a ser analisado
+        config: Configurações do sistema
+    
+    Returns:
+        tuple: (resultados_ordenados, linha)
+    """
     max_tentativas = 3
+    tentativas = 0
     
     while tentativas < max_tentativas:
         try:
-            tentativas += 1
-            print(f"🔄 Tentativa {tentativas}/{max_tentativas} de catalogação")
-            
-            # Carrega a configuração com tratamento de erro
+            if not API:
+                raise Exception("API não inicializada")
+                
+            # Validação da configuração
             if config is None:
+                config = {}
+            
+            # Obtém os pares disponíveis
+            pares, erro = obter_pares_abertos(API, tipo_par)
+            if erro:
+                raise Exception(f"Erro ao obter pares: {erro}")
+            
+            if not pares:
+                raise Exception("Nenhum par disponível para análise")
+            
+            print(f"ℹ️ Iniciando catalogação com {len(pares)} pares disponíveis...")
+            print("📊 Pares encontrados:", ", ".join(pares))
+            
+            # Obtém os resultados para os pares
+            resultados = []
+            for par in tqdm(pares, desc="Analisando pares"):
                 try:
-                    print("⚠️ Configuração não fornecida, carregando do arquivo...")
-                    config = ConfigObj('config.txt')
+                    resultado_par = obter_resultados(API, [par])
+                    if resultado_par:
+                        resultados.extend(resultado_par)
                 except Exception as e:
-                    print(f"⚠️ Erro ao carregar configuração: {str(e)}. Usando valores padrão.")
-                    config = {'MARTINGALE': {'usar': 'N', 'niveis': '2'}, 'AJUSTES': {}}
-            else:
-                print("✅ Usando configuração fornecida (cache)")
-            
-            # Se não foi passado um tipo_par, tenta ler da configuração
-            if tipo_par == "Automático (Prioriza OTC)" and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
-                tipo_par = config['AJUSTES']['tipo_par']
-                print(f"✅ Usando tipo de par da configuração: {tipo_par}")
-            
-            # Tenta obter pares com diferentes estratégias
-            pares = []
-            
-            # Estratégia 1: Usar o tipo de par especificado
-            if not pares or len(pares) == 0:
-                try:
-                    pares = obter_pares_abertos(API, tipo_par)
-                    if pares and len(pares) > 0:
-                        print(f"✅ Obtidos {len(pares)} pares usando {tipo_par}")
-                except Exception as e:
-                    print(f"⚠️ Erro ao obter pares com {tipo_par}: {str(e)}")
-            
-            # Estratégia 2: Tentar com "Automático (Todos os Pares)"
-            if not pares or len(pares) == 0:
-                try:
-                    print(f"⚠️ Tentando com todos os pares disponíveis...")
-                    pares = obter_pares_abertos(API, "Automático (Todos os Pares)")
-                    if pares and len(pares) > 0:
-                        print(f"✅ Obtidos {len(pares)} pares usando Automático (Todos os Pares)")
-                except Exception as e:
-                    print(f"⚠️ Erro ao obter todos os pares: {str(e)}")
-            
-            # Estratégia 3: Tentar obter manualmente alguns pares comuns
-            if not pares or len(pares) == 0:
-                try:
-                    print("⚠️ Tentando com pares padrão...")
-                    pares_padrao = ["EURUSD", "EURUSD-OTC", "USDJPY", "USDJPY-OTC", "GBPUSD", "GBPUSD-OTC"]
-                    pares_disponiveis = []
-                    
-                    all_asset = API.get_all_open_time()
-                    for par in pares_padrao:
-                        try:
-                            if par in all_asset['binary'] and all_asset['binary'][par]['open']:
-                                pares_disponiveis.append(par)
-                        except:
-                            pass
-                    
-                    if pares_disponiveis:
-                        pares = pares_disponiveis
-                        print(f"✅ Usando pares padrão: {pares}")
-                except Exception as e:
-                    print(f"⚠️ Erro ao obter pares padrão: {str(e)}")
-            
-            # Se ainda não temos pares, não podemos continuar
-            if not pares or len(pares) == 0:
-                if tentativas < max_tentativas:
-                    print(f"❌ Tentativa {tentativas} falhou. Tentando novamente em 10 segundos...")
-                    time.sleep(10)
-                    # Tenta reconectar a API
-                    try:
-                        API = reconectar_api(API)
-                    except:
-                        pass
+                    logger.error(f"Erro ao analisar par {par}: {str(e)}")
                     continue
-                else:
-                    print("❌ Não foi possível encontrar nenhum par disponível para negociação após várias tentativas.")
-                    # Último recurso: usar um par fictício para permitir a operação
-                    pares = ["EURUSD"]
             
-            print(f"✅ Iniciando análise com {len(pares)} pares: {pares}")
-            resultados = obter_resultados(API, pares)
+            if not resultados:
+                raise Exception("Nenhum resultado obtido na análise")
             
-            # Verifica se temos resultados
-            if not resultados or len(resultados) == 0:
-                if tentativas < max_tentativas:
-                    print(f"❌ Nenhum resultado obtido na tentativa {tentativas}. Tentando novamente...")
-                    time.sleep(5)
-                    continue
-                else:
-                    print("❌ Nenhum resultado obtido após várias tentativas. Criando resultados padrão...")
-                    # Cria resultados padrão para pelo menos um par
-                    par = pares[0] if pares and len(pares) > 0 else "EURUSD"
-                    resultados = [
-                        ["MHI", par, 60.0, 50.0, 40.0],
-                        ["BB", par, 60.0, 50.0, 40.0]
-                    ]
-            
-            # Determina a linha para ordenação
+            # Determina a linha para ordenação com validação
+            linha = 2  # Valor padrão
             try:
-                if 'MARTINGALE' in config and 'usar' in config['MARTINGALE'] and config['MARTINGALE']['usar'] == 'S':
-                    linha = 2 + int(config['MARTINGALE'].get('niveis', '2'))
-                else:
-                    linha = 2
-            except:
-                linha = 2  # Valor padrão em caso de erro
+                if config.get('MARTINGALE', {}).get('usar') == 'S':
+                    niveis = int(config.get('MARTINGALE', {}).get('niveis', '2'))
+                    linha = 2 + niveis
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Erro ao determinar linha de ordenação: {str(e)}. Usando valor padrão.")
             
-            # Ordena os resultados
+            # Ordena os resultados com validação
             try:
-                resultados_ordenados = sorted(resultados, key=lambda x: float(x[linha]) if isinstance(x[linha], (int, float)) or (isinstance(x[linha], str) and x[linha].replace('.', '', 1).isdigit()) else 0, reverse=True)
+                resultados_ordenados = sorted(
+                    resultados,
+                    key=lambda x: float(x[linha]) if isinstance(x[linha], (int, float)) or (
+                        isinstance(x[linha], str) and x[linha].replace('.', '', 1).isdigit()
+                    ) else 0,
+                    reverse=True
+                )
             except Exception as e:
-                print(f"⚠️ Erro ao ordenar resultados: {str(e)}. Usando resultados sem ordenação.")
+                logger.error(f"Erro ao ordenar resultados: {str(e)}. Usando resultados sem ordenação.")
                 resultados_ordenados = resultados
             
             print(f"✅ Catalogação concluída com sucesso! {len(resultados_ordenados)} estratégias encontradas.")
             return resultados_ordenados, linha
             
         except Exception as e:
-            print(f"❌ Erro na tentativa {tentativas} de catalogação: {str(e)}")
+            tentativas += 1
+            erro_msg = f"❌ Erro na tentativa {tentativas} de catalogação: {str(e)}"
+            logger.error(erro_msg)
+            print(erro_msg)
+            
             if tentativas < max_tentativas:
-                print(f"Tentando novamente em 10 segundos...")
+                print(f"⏳ Tentando novamente em 10 segundos...")
                 time.sleep(10)
-                # Tenta reconectar a API
                 try:
                     API = reconectar_api(API)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Erro ao reconectar API: {str(e)}")
             else:
                 print("❌ Todas as tentativas de catalogação falharam.")
                 # Retorna resultados padrão como último recurso
@@ -519,9 +587,8 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
                     ["MHI", par, 60.0, 50.0, 40.0],
                     ["BB", par, 60.0, 50.0, 40.0]
                 ]
-                return resultados_padrao, 2
+                return resultados_padrao, linha
     
-    # Não deveria chegar aqui, mas por segurança
     return [], 2
 
 # ============================
