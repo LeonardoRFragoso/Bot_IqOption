@@ -298,33 +298,20 @@ if "losses" not in st.session_state:
 if "total_ops" not in st.session_state:
     st.session_state.total_ops = 0
 
-# Título principal
-st.markdown("<h1 class='main-header'>Bot Trader IQ Option</h1>", unsafe_allow_html=True)
+# Variável global para cache de configuração
+_config_cache = None
 
-# Função para adicionar mensagens ao log
-def log_message(message, message_type="info"):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    
-    if message_type == "success":
-        formatted_message = f"<span style='color: #28a745;'>[{timestamp}] {message}</span>"
-    elif message_type == "error":
-        formatted_message = f"<span style='color: #dc3545;'>[{timestamp}] {message}</span>"
-    elif message_type == "warning":
-        formatted_message = f"<span style='color: #ffc107;'>[{timestamp}] {message}</span>"
-    elif message_type == "operation":
-        formatted_message = f"<span style='color: #9370DB;'>[{timestamp}] {message}</span>"
-    else:
-        formatted_message = f"<span style='color: #E0E0E0;'>[{timestamp}] {message}</span>"
-    
-    st.session_state.log_messages.append(formatted_message)
-    logging.info(message)
-
-# Função para carregar configurações com tratamento de erros
 def load_config():
+    global _config_cache
     try:
+        # Se já temos a configuração em cache, retornamos ela
+        if _config_cache is not None:
+            return _config_cache
+            
         if os.path.exists('config.txt'):
             config = ConfigObj('config.txt', encoding='utf-8')
             log_message("Configurações carregadas com sucesso")
+            _config_cache = config
             return config
         else:
             log_message("Arquivo de configuração não encontrado. Criando novo...", "warning")
@@ -346,13 +333,14 @@ def load_config():
             config['SOROS'] = {'usar': 'N', 'niveis': '2'}
             
             config.write()
+            _config_cache = config
             return config
     except Exception as e:
         log_message(f"Erro ao carregar configurações: {str(e)}", "error")
         return None
 
-# Função para salvar configurações
 def save_config(config_data):
+    global _config_cache
     try:
         config = ConfigObj()
         config.encoding = 'utf-8'  # Definir codificação explicitamente para UTF-8
@@ -387,6 +375,9 @@ def save_config(config_data):
         # Salva o arquivo
         config.filename = 'config.txt'
         config.write()
+        
+        # Atualiza o cache
+        _config_cache = config
         
         log_message("Configurações salvas com sucesso", "success")
         return True
@@ -493,78 +484,28 @@ def get_payout(api, asset, option_type="binary"):
 
 # Função para executar o catalogador
 def run_catalogador(api):
-    try:
-        log_message("Iniciando catalogação de ativos...", "info")
-        
-        # Carrega as configurações
-        config = load_config()
-        tipo_par = "Automático (Prioriza OTC)"
-        if config and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
-            tipo_par = config['AJUSTES']['tipo_par']
-        
-        log_message(f"Tipo de par selecionado: {tipo_par}", "info")
-        
-        # Executa o catalogador com a opção "Automático (Todos os Pares)"
-        # Isso garante que todos os pares disponíveis serão considerados
-        log_message("Buscando todos os pares disponíveis (OTC e normais)...", "info")
-        
-        try:
-            # Executa a catalogação com todos os pares disponíveis
-            resultados, linha = catag(api, "Automático (Todos os Pares)")
-            
-            if not resultados or len(resultados) == 0:
-                log_message("Nenhum resultado obtido na catalogação. Verificando disponibilidade de pares...", "warning")
-                
-                # Verifica manualmente a disponibilidade de pares
-                pares_otc = obter_pares_abertos(api, "Apenas OTC")
-                pares_normais = obter_pares_abertos(api, "Apenas Normais")
-                
-                if pares_otc and len(pares_otc) > 0:
-                    log_message(f"Pares OTC disponíveis: {', '.join(pares_otc)}", "info")
-                else:
-                    log_message("Nenhum par OTC disponível no momento.", "warning")
-                
-                if pares_normais and len(pares_normais) > 0:
-                    log_message(f"Pares normais disponíveis: {', '.join(pares_normais)}", "info")
-                else:
-                    log_message("Nenhum par normal disponível no momento.", "warning")
-                
-                if (not pares_otc or len(pares_otc) == 0) and (not pares_normais or len(pares_normais) == 0):
-                    log_message("Nenhum par disponível para negociação. Verifique se o mercado está aberto.", "error")
-                else:
-                    log_message("Pares disponíveis encontrados, mas a catalogação falhou. Verifique o log para mais detalhes.", "error")
-                
-                return None, 0
-            
-            st.session_state.catalog_results = resultados
-            st.session_state.catalog_line = linha
-            
-            log_message(f"Catalogação concluída com sucesso. Encontrados {len(resultados)} resultados.", "success")
-            return resultados, linha
-            
-        except Exception as e:
-            log_message(f"Erro durante a catalogação: {str(e)}", "error")
-            
-            # Tenta obter informações sobre pares disponíveis para diagnóstico
-            try:
-                pares_otc = obter_pares_abertos(api, "Apenas OTC")
-                pares_normais = obter_pares_abertos(api, "Apenas Normais")
-                
-                if pares_otc and len(pares_otc) > 0:
-                    log_message(f"Pares OTC disponíveis: {len(pares_otc)}", "info")
-                if pares_normais and len(pares_normais) > 0:
-                    log_message(f"Pares normais disponíveis: {len(pares_normais)}", "info")
-                
-                if (not pares_otc or len(pares_otc) == 0) and (not pares_normais or len(pares_normais) == 0):
-                    log_message("Nenhum par disponível para negociação. Verifique se o mercado está aberto.", "error")
-            except:
-                log_message("Não foi possível verificar a disponibilidade de pares.", "error")
-            
-            return None, 0
-            
-    except Exception as e:
-        log_message(f"Erro ao executar catalogação: {str(e)}", "error")
-        return None, 0
+    global _config_cache
+    
+    if not api:
+        st.error("❌ Erro: API não conectada")
+        return None, None
+    
+    # Usa a configuração em cache se disponível
+    config = _config_cache if _config_cache is not None else load_config()
+    
+    if not config:
+        st.error("❌ Erro: Não foi possível carregar as configurações")
+        return None, None
+    
+    tipo_par = config['AJUSTES'].get('tipo_par', "Automático (Prioriza OTC)")
+    
+    log_message("Iniciando catalogação de ativos...")
+    log_message(f"Tipo de par selecionado: {tipo_par}")
+    
+    # Passa a configuração diretamente para evitar que seja carregada novamente
+    resultados, linha = catag(api, tipo_par, config)
+    
+    return resultados, linha
 
 # Função para executar o bot de trading
 def run_trading_bot(api, estrategia, ativo, config_data):
@@ -1063,6 +1004,24 @@ def run_trading_bot(api, estrategia, ativo, config_data):
     except Exception as e:
         st.session_state.bot_running = False
         log_message(f"Exceção geral no bot: {str(e)}", "error")
+
+# Função para adicionar mensagens ao log
+def log_message(message, message_type="info"):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    
+    if message_type == "success":
+        formatted_message = f"<span style='color: #28a745;'>[{timestamp}] {message}</span>"
+    elif message_type == "error":
+        formatted_message = f"<span style='color: #dc3545;'>[{timestamp}] {message}</span>"
+    elif message_type == "warning":
+        formatted_message = f"<span style='color: #ffc107;'>[{timestamp}] {message}</span>"
+    elif message_type == "operation":
+        formatted_message = f"<span style='color: #9370DB;'>[{timestamp}] {message}</span>"
+    else:
+        formatted_message = f"<span style='color: #E0E0E0;'>[{timestamp}] {message}</span>"
+    
+    st.session_state.log_messages.append(formatted_message)
+    logging.info(message)
 
 # Sidebar - Configurações e Login
 with st.sidebar:

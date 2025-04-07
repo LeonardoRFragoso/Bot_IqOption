@@ -116,3 +116,12 @@
 2025-04-07 09:51:36,999 - INFO - Iniciando conexão com a IQ Option...
 2025-04-07 09:51:37,034 - ERROR - [Errno 11004] getaddrinfo failed
 2025-04-07 09:51:37,066 - INFO - Erro na conexão: [Errno 11004] getaddrinfo failed
+2025-04-07 11:35:44,242 - INFO - Configurações carregadas com sucesso
+2025-04-07 11:35:48,108 - INFO - Configurações carregadas com sucesso
+2025-04-07 11:35:48,120 - INFO - Iniciando conexão com a IQ Option... Tipo de conta selecionada: Demo
+2025-04-07 11:35:48,153 - ERROR - [Errno 11004] getaddrinfo failed
+2025-04-07 11:35:48,240 - INFO - Tentativa 1/3 falhou: [Errno 11004] getaddrinfo failed
+2025-04-07 11:35:50,256 - ERROR - [Errno 11004] getaddrinfo failed
+2025-04-07 11:35:50,287 - INFO - Tentativa 2/3 falhou: [Errno 11004] getaddrinfo failed
+2025-04-07 11:35:52,305 - ERROR - [Errno 11004] getaddrinfo failed
+2025-04-07 11:35:52,338 - INFO - Tentativa 3/3 falhou: [Errno 11004] getaddrinfo failed

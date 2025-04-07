@@ -378,7 +378,7 @@ def reconectar_api(API):
             time.sleep(3)
     raise Exception("Falha crítica ao reconectar com a API")
 
-def catag(API, tipo_par="Automático (Prioriza OTC)"):
+def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
     tentativas = 0
     max_tentativas = 3
     
@@ -388,11 +388,12 @@ def catag(API, tipo_par="Automático (Prioriza OTC)"):
             print(f"🔄 Tentativa {tentativas}/{max_tentativas} de catalogação")
             
             # Carrega a configuração com tratamento de erro
-            try:
-                config = ConfigObj('config.txt')
-            except Exception as e:
-                print(f"⚠️ Erro ao carregar configuração: {str(e)}. Usando valores padrão.")
-                config = {'MARTINGALE': {'usar': 'N', 'niveis': '2'}, 'AJUSTES': {}}
+            if config is None:
+                try:
+                    config = ConfigObj('config.txt')
+                except Exception as e:
+                    print(f"⚠️ Erro ao carregar configuração: {str(e)}. Usando valores padrão.")
+                    config = {'MARTINGALE': {'usar': 'N', 'niveis': '2'}, 'AJUSTES': {}}
             
             # Se não foi passado um tipo_par, tenta ler da configuração
             if tipo_par == "Automático (Prioriza OTC)" and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
@@ -533,7 +534,7 @@ if __name__ == "__main__":
                 print("✅ Conexão com IQ Option realizada com sucesso!")
                 API.change_balance('PRACTICE')
                 try:
-                    catalog, linha = catag(API, config['AJUSTES']['tipo_par'] if 'AJUSTES' in config and 'tipo_par' in config['AJUSTES'] else "Automático (Prioriza OTC)")
+                    catalog, linha = catag(API, config['AJUSTES']['tipo_par'] if 'AJUSTES' in config and 'tipo_par' in config['AJUSTES'] else "Automático (Prioriza OTC)", config)
                     headers = ["Estratégia", "Par", "Win%", "Gale1%", "Gale2%"]
                     print(tabulate(catalog, headers=headers, tablefmt="pretty"))
                     break
