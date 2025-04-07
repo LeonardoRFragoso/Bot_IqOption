@@ -23,29 +23,37 @@ logging.getLogger("iqoptionapi").addFilter(GetCandlesFilter())
 # FUNÇÕES PRINCIPAIS
 # ============================
 
-def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
+def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permitidos=None):
     """
-    Obtém os pares disponíveis para negociação, verificando tanto pares OTC quanto normais.
+    Obtém os pares disponíveis para negociação com filtro por tipo.
     
     Args:
         API: Objeto da API IQ Option
         tipo_par: String indicando a preferência de tipo de par
-    
-    Returns:
-        list: Lista de pares disponíveis para negociação
-        str: Mensagem de erro em caso de falha
+        tipos_permitidos: Lista de tipos permitidos (ex: ['binary', 'digital'])
     """
     try:
         if not API:
             return [], "API não inicializada"
+        
+        # Define tipos padrão se não especificados
+        if tipos_permitidos is None:
+            tipos_permitidos = ['binary', 'digital']
             
-        # Verifica se a API está conectada
+        print(f"\n📋 Tipos de ativos permitidos: {', '.join(tipos_permitidos)}")
+            
+        # Verifica se a API está conectada e trata erro SSL
         try:
             check = API.check_connect()
             if not check:
+                print("Reconectando API...")
                 API = reconectar_api(API)
-        except:
-            API = reconectar_api(API)
+        except Exception as e:
+            if 'is_ssl' in str(e):
+                print("⚠️ Erro de SSL detectado. Tentando reconexão...")
+                API = reconectar_api(API)
+            else:
+                raise
         
         # Lista de pares para monitorar
         pares_base = [
@@ -65,84 +73,87 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
         while tentativa < max_tentativas and not all_asset:
             try:
                 print(f"\nTentativa {tentativa + 1} de obter ativos...")
-                all_asset = API.get_all_open_time()
                 
+                # Força verificação da conexão antes de obter ativos
+                API.check_connect()
+                time.sleep(1)  # Pequena pausa para estabilizar
+                
+                all_asset = API.get_all_open_time()
                 if not all_asset:
                     raise Exception("API retornou dados vazios")
                 
-                if not isinstance(all_asset, dict):
-                    raise Exception(f"API retornou tipo inesperado: {type(all_asset)}")
-                
                 print("✅ Dados de ativos obtidos")
-                print(f"Tipos disponíveis: {list(all_asset.keys())}")
+                tipos_disponiveis = list(all_asset.keys())
+                print(f"Tipos disponíveis: {tipos_disponiveis}")
                 
-                # Verifica se temos acesso aos dados binários
-                if 'binary' not in all_asset:
-                    raise Exception("Dados binários não disponíveis")
+                # Verifica tipos disponíveis vs permitidos
+                tipos_validos = [t for t in tipos_permitidos if t in tipos_disponiveis]
+                if not tipos_validos:
+                    raise Exception(f"Nenhum dos tipos permitidos {tipos_permitidos} está disponível")
                 
-                # Verifica se há algum ativo disponível
-                ativos_disponiveis = False
-                for tipo in all_asset:
-                    if all_asset[tipo] and len(all_asset[tipo]) > 0:
-                        ativos_disponiveis = True
-                        break
-                
-                if not ativos_disponiveis:
-                    raise Exception("Nenhum ativo disponível em nenhuma categoria")
+                print(f"✅ Tipos válidos encontrados: {tipos_validos}")
                 
             except Exception as e:
                 tentativa += 1
                 print(f"❌ Erro ao obter ativos (tentativa {tentativa}): {str(e)}")
-                if tentativa < max_tentativas:
-                    time.sleep(2)
+                
+                if 'is_ssl' in str(e):
+                    print("⚠️ Erro de SSL detectado. Tentando reconexão...")
+                    time.sleep(5)
                     try:
                         API = reconectar_api(API)
                     except:
-                        pass
+                        if tentativa >= max_tentativas:
+                            return [], "Falha ao reconectar após erro SSL"
+                elif tentativa < max_tentativas:
+                    time.sleep(2)
                 else:
                     return [], f"Falha ao obter ativos após {max_tentativas} tentativas: {str(e)}"
         
-        # Verifica quais pares estão abertos para negociação binária
+        # Verifica quais pares estão abertos para negociação
         pares_normais_abertos = []
         pares_otc_abertos = []
         
-        # Debug: Mostra todos os ativos disponíveis
-        print("\nAtivos binários disponíveis:")
-        for ativo, info in all_asset['binary'].items():
-            status = "✅ Aberto" if info.get('open', False) else "❌ Fechado"
-            print(f"{ativo}: {status}")
+        # Debug: Mostra todos os ativos disponíveis por tipo
+        print("\nVerificando disponibilidade dos ativos...")
+        for tipo in tipos_validos:
+            print(f"\n📊 Ativos do tipo {tipo}:")
+            if tipo in all_asset:
+                for ativo, info in all_asset[tipo].items():
+                    status = "✅ Aberto" if info.get('open', False) else "❌ Fechado"
+                    print(f"  {ativo}: {status}")
         
         # Verifica pares normais
         if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas Normais"]:
-            for par in pares_base:
-                try:
-                    if par in all_asset['binary']:
-                        info = all_asset['binary'][par]
-                        if isinstance(info, dict) and info.get('open', False):
-                            pares_normais_abertos.append(par)
-                            print(f"✅ Par normal disponível: {par}")
-                        else:
-                            print(f"❌ Par normal indisponível: {par}")
-                    else:
-                        print(f"❓ Par normal não encontrado: {par}")
-                except Exception as e:
-                    print(f"⚠️ Erro ao verificar par {par}: {str(e)}")
+            for tipo in tipos_validos:
+                for par in pares_base:
+                    try:
+                        if par in all_asset.get(tipo, {}):
+                            info = all_asset[tipo][par]
+                            if isinstance(info, dict) and info.get('open', False):
+                                if par not in pares_normais_abertos:  # Evita duplicatas
+                                    pares_normais_abertos.append(par)
+                                    print(f"✅ Par normal disponível ({tipo}): {par}")
+                            else:
+                                print(f"❌ Par normal indisponível ({tipo}): {par}")
+                    except Exception as e:
+                        print(f"⚠️ Erro ao verificar par {par} ({tipo}): {str(e)}")
         
         # Verifica pares OTC
         if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas OTC"]:
-            for par in pares_otc:
-                try:
-                    if par in all_asset['binary']:
-                        info = all_asset['binary'][par]
-                        if isinstance(info, dict) and info.get('open', False):
-                            pares_otc_abertos.append(par)
-                            print(f"✅ Par OTC disponível: {par}")
-                        else:
-                            print(f"❌ Par OTC indisponível: {par}")
-                    else:
-                        print(f"❓ Par OTC não encontrado: {par}")
-                except Exception as e:
-                    print(f"⚠️ Erro ao verificar par OTC {par}: {str(e)}")
+            for tipo in tipos_validos:
+                for par in pares_otc:
+                    try:
+                        if par in all_asset.get(tipo, {}):
+                            info = all_asset[tipo][par]
+                            if isinstance(info, dict) and info.get('open', False):
+                                if par not in pares_otc_abertos:  # Evita duplicatas
+                                    pares_otc_abertos.append(par)
+                                    print(f"✅ Par OTC disponível ({tipo}): {par}")
+                            else:
+                                print(f"❌ Par OTC indisponível ({tipo}): {par}")
+                    except Exception as e:
+                        print(f"⚠️ Erro ao verificar par OTC {par} ({tipo}): {str(e)}")
         
         # Seleciona os pares conforme a preferência
         pares_disponiveis = []
@@ -165,35 +176,39 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)"):
             print(f"\n✅ Usando {len(pares_normais_abertos)} pares normais")
         
         if not pares_disponiveis:
-            return [], f"Nenhum par disponível para o tipo {tipo_par}"
+            return [], f"Nenhum par disponível para o tipo {tipo_par} nos tipos {tipos_permitidos}"
         
         print(f"\nPares disponíveis para operação: {', '.join(pares_disponiveis)}")
         return pares_disponiveis, None
         
     except Exception as e:
+        if 'is_ssl' in str(e):
+            print("⚠️ Erro de SSL detectado durante a verificação de pares")
+            try:
+                API = reconectar_api(API)
+                return obter_pares_abertos(API, tipo_par, tipos_permitidos)  # Tenta novamente após reconexão
+            except:
+                pass
         print(f"❌ Erro crítico ao obter pares: {str(e)}")
         return [], f"Erro ao obter pares: {str(e)}"
 
 def reconectar_api(API):
     """
     Reconecta com a API IQ Option com tratamento de erros aprimorado.
-    
-    Args:
-        API: Objeto da API IQ Option
-    
-    Returns:
-        IQ_Option: Nova instância da API conectada
     """
     config = ConfigObj('config.txt')
     max_tentativas = 3
     
+    # Fecha conexão antiga com segurança
     try:
         if API:
             try:
                 API.close()
                 print("Conexão anterior fechada com sucesso")
             except:
-                print("Aviso: Não foi possível fechar a conexão anterior")
+                pass
+            # Garante que o objeto seja limpo
+            del API
     except:
         pass
     
@@ -202,9 +217,12 @@ def reconectar_api(API):
     
     for tentativa in range(max_tentativas):
         try:
+            # Cria nova instância da API
             API = IQ_Option(config['LOGIN']['email'], config['LOGIN']['senha'])
-            check, reason = API.connect()
+            API.set_max_reconnect(5)  # Aumenta o número de tentativas de reconexão
             
+            # Tenta conectar
+            check, reason = API.connect()
             if check:
                 print("✅ Conectado com sucesso!")
                 
@@ -214,27 +232,25 @@ def reconectar_api(API):
                     if not perfil:
                         raise Exception("Não foi possível obter o perfil")
                     print(f"✅ Perfil verificado: {perfil.get('name', 'Unknown')}")
-                except Exception as e:
-                    print(f"⚠️ Aviso: Erro ao verificar perfil: {str(e)}")
-                
-                # Tenta mudar para conta demo
-                try:
+                    
+                    # Tenta mudar para conta demo
                     API.change_balance('PRACTICE')
                     print("✅ Conta DEMO selecionada")
-                except Exception as e:
-                    print(f"⚠️ Aviso: Erro ao mudar para conta DEMO: {str(e)}")
-                
-                # Verifica se consegue obter os ativos
-                try:
+                    
+                    # Verifica se consegue obter os ativos
+                    API.check_connect()  # Força verificação da conexão
+                    time.sleep(1)  # Pequena pausa para estabilizar
+                    
                     all_asset = API.get_all_open_time()
                     if not all_asset:
                         raise Exception("Não foi possível obter lista de ativos")
                     print("✅ Lista de ativos verificada")
+                    
+                    return API
+                    
                 except Exception as e:
-                    print(f"⚠️ Aviso: Erro ao verificar ativos: {str(e)}")
-                
-                time.sleep(1)
-                return API
+                    print(f"⚠️ Erro na verificação pós-conexão: {str(e)}")
+                    raise
             else:
                 print(f"❌ Tentativa {tentativa + 1}/{max_tentativas}: Falha ao conectar: {reason}")
                 if "invalid_credentials" in str(reason).lower():
@@ -242,7 +258,10 @@ def reconectar_api(API):
                 time.sleep(3)
         except Exception as e:
             print(f"❌ Erro na tentativa {tentativa + 1}: {str(e)}")
-            if tentativa < max_tentativas - 1:
+            if 'is_ssl' in str(e):
+                print("⚠️ Erro de SSL detectado. Tentando reconexão...")
+                time.sleep(5)  # Espera maior para erros SSL
+            elif tentativa < max_tentativas - 1:
                 print("Tentando novamente em 3 segundos...")
                 time.sleep(3)
             else:
@@ -381,13 +400,15 @@ def obter_resultados(API, pares):
                 try:
                     print("🕒 Solicitando velas...")
                     
-                    # Verifica se o par está disponível antes de solicitar velas
-                    all_asset = API.get_all_open_time()
-                    if par not in all_asset['binary'] or not all_asset['binary'][par]['open']:
-                        print(f"⚠️ Par {par} não está disponível no momento, pulando.")
-                        break
+                    # Verifica conexão antes de obter velas
+                    if not API.check_connect():
+                        print("  ⚠️ Reconectando à API...")
+                        API = reconectar_api(API)
                     
-                    # Define o timeframe correto para cada estratégia
+                    # Pequena pausa para estabilizar
+                    time.sleep(1)
+                    
+                    # Obtém as velas
                     tf = 300 if estrategia in ['mhi_m5', 'bb'] else timeframe
                     qnt = qnt_velas_m5 if estrategia in ['mhi_m5', 'bb'] else qnt_velas
                     
@@ -517,7 +538,8 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
                 config = {}
             
             # Obtém os pares disponíveis
-            pares, erro = obter_pares_abertos(API, tipo_par)
+            tipos_permitidos = ['binary', 'digital']
+            pares, erro = obter_pares_abertos(API, tipo_par, tipos_permitidos)
             if erro:
                 raise Exception(f"Erro ao obter pares: {erro}")
             
@@ -590,6 +612,213 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
                 return resultados_padrao, linha
     
     return [], 2
+
+def obter_velas(API, par, qnt_velas):
+    """
+    Obtém velas do par com tratamento de erros e retentativas.
+    """
+    max_tentativas = 3
+    for tentativa in range(max_tentativas):
+        try:
+            print(f"  ⏳ Tentativa {tentativa + 1}/{max_tentativas} de obter velas para {par}")
+            
+            # Verifica conexão antes de obter velas
+            if not API.check_connect():
+                print("  ⚠️ Reconectando à API...")
+                API = reconectar_api(API)
+            
+            # Pequena pausa para estabilizar
+            time.sleep(1)
+            
+            # Obtém as velas
+            velas = API.get_candles(par, 60, qnt_velas, time.time())
+
+            if velas and len(velas) > 0:
+                print(f"  ✅ {len(velas)} velas obtidas com sucesso")
+                return velas
+            else:
+                raise Exception("Nenhuma vela retornada pela API")
+                
+        except Exception as e:
+            print(f"  ❌ Erro na tentativa {tentativa + 1}: {str(e)}")
+            if 'is_ssl' in str(e):
+                print("  ⚠️ Erro de SSL detectado, reconectando...")
+                try:
+                    API = reconectar_api(API)
+                except:
+                    pass
+            elif tentativa < max_tentativas - 1:
+                print("  ⏳ Aguardando 2 segundos antes da próxima tentativa...")
+                time.sleep(2)
+            else:
+                print(f"  ❌ Falha após {max_tentativas} tentativas")
+                return None
+    return None
+
+def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
+    """
+    Função principal de catalogação de ativos.
+    """
+    try:
+        print("\n🔍 Iniciando processo de catalogação...")
+        
+        # Define tipos permitidos
+        tipos_permitidos = ['binary', 'digital']
+        print(f"📋 Analisando apenas tipos: {', '.join(tipos_permitidos)}")
+        
+        # Obtém os pares disponíveis
+        pares, erro = obter_pares_abertos(API, tipo_par, tipos_permitidos)
+        if erro:
+            print(f"❌ Erro ao obter pares: {erro}")
+            return None
+        
+        if not pares:
+            print("❌ Nenhum par disponível para catalogação")
+            return None
+            
+        print(f"\nℹ️ Iniciando catalogação com {len(pares)} pares disponíveis...")
+        print(f"📊 Pares encontrados: {', '.join(pares)}")
+        
+        # Configurações para catalogação
+        dias_catalogacao = 3
+        velas_por_dia = 288  # 5 minutos = 288 velas por dia
+        total_velas = dias_catalogacao * velas_por_dia
+        
+        print(f"\n📈 Coletando dados dos últimos {dias_catalogacao} dias...")
+        print(f"⏳ Total de velas a serem analisadas por par: {total_velas}")
+        
+        resultados = []
+        total_pares = len(pares)
+        
+        for idx, par in enumerate(pares, 1):
+            print(f"\n🔄 Analisando par {idx}/{total_pares}: {par}")
+            print(f"⏳ Obtendo velas...")
+            
+            try:
+                velas = obter_velas(API, par, total_velas)
+                if not velas or len(velas) < 20:  # Mínimo de velas para análise
+                    print(f"⚠️ Dados insuficientes para {par}, pulando...")
+                    continue
+                    
+                print(f"✅ {len(velas)} velas obtidas para {par}")
+                print(f"📊 Analisando padrões...")
+                
+                # Analisa as velas para cada estratégia
+                for estrategia in ['MHI', 'MHI2', 'MHI3', 'MILHAO', 'TORRES']:
+                    print(f"  🔍 Analisando estratégia {estrategia}...")
+                    resultado = analisar_velas(velas, estrategia)
+                    
+                    if resultado:
+                        taxa_acerto = calcular_taxa_acerto(resultado)
+                        print(f"  ✅ {estrategia}: Taxa de acerto = {taxa_acerto:.1f}%")
+                        resultados.append({
+                            'par': par,
+                            'estrategia': estrategia,
+                            'taxa_acerto': taxa_acerto,
+                            'detalhes': resultado
+                        })
+                    else:
+                        print(f"  ⚠️ {estrategia}: Sem resultados válidos")
+                
+            except Exception as e:
+                print(f"❌ Erro ao analisar {par}: {str(e)}")
+                continue
+        
+        print("\n✅ Catalogação concluída!")
+        if resultados:
+            print(f"📊 Total de {len(resultados)} análises realizadas")
+            return resultados
+        else:
+            print("⚠️ Nenhum resultado válido encontrado")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Erro durante a catalogação: {str(e)}")
+        return None
+
+def calcular_taxa_acerto(resultado):
+    total_entradas = sum(resultado.values())
+    if total_entradas == 0:
+        return 0
+    taxa_acerto = round(resultado['win'] / total_entradas * 100, 2)
+    return taxa_acerto
+
+def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
+    """
+    Função principal de catalogação de ativos.
+    """
+    try:
+        print("\n🔍 Iniciando processo de catalogação...")
+        
+        # Obtém os pares disponíveis
+        pares, erro = obter_pares_abertos(API, tipo_par)
+        if erro:
+            print(f"❌ Erro ao obter pares: {erro}")
+            return None
+        
+        if not pares:
+            print("❌ Nenhum par disponível para catalogação")
+            return None
+            
+        print(f"\nℹ️ Iniciando catalogação com {len(pares)} pares disponíveis...")
+        print(f"📊 Pares encontrados: {', '.join(pares)}")
+        
+        # Configurações para catalogação
+        dias_catalogacao = 3
+        velas_por_dia = 288  # 5 minutos = 288 velas por dia
+        total_velas = dias_catalogacao * velas_por_dia
+        
+        print(f"\n📈 Coletando dados dos últimos {dias_catalogacao} dias...")
+        print(f"⏳ Total de velas a serem analisadas por par: {total_velas}")
+        
+        resultados = []
+        total_pares = len(pares)
+        
+        for idx, par in enumerate(pares, 1):
+            print(f"\n🔄 Analisando par {idx}/{total_pares}: {par}")
+            print(f"⏳ Obtendo velas...")
+            
+            try:
+                velas = obter_velas(API, par, total_velas)
+                if not velas or len(velas) < 20:  # Mínimo de velas para análise
+                    print(f"⚠️ Dados insuficientes para {par}, pulando...")
+                    continue
+                    
+                print(f"✅ {len(velas)} velas obtidas para {par}")
+                print(f"📊 Analisando padrões...")
+                
+                # Analisa as velas para cada estratégia
+                for estrategia in ['MHI', 'MHI2', 'MHI3', 'MILHAO', 'TORRES']:
+                    print(f"  🔍 Analisando estratégia {estrategia}...")
+                    resultado = analisar_velas(velas, estrategia)
+                    
+                    if resultado:
+                        taxa_acerto = calcular_taxa_acerto(resultado)
+                        print(f"  ✅ {estrategia}: Taxa de acerto = {taxa_acerto:.1f}%")
+                        resultados.append({
+                            'par': par,
+                            'estrategia': estrategia,
+                            'taxa_acerto': taxa_acerto,
+                            'detalhes': resultado
+                        })
+                    else:
+                        print(f"  ⚠️ {estrategia}: Sem resultados válidos")
+                
+            except Exception as e:
+                print(f"❌ Erro ao analisar {par}: {str(e)}")
+                continue
+        
+        print("\n✅ Catalogação concluída!")
+        if resultados:
+            print(f"📊 Total de {len(resultados)} análises realizadas")
+            return resultados
+        else:
+            print("⚠️ Nenhum resultado válido encontrado")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Erro durante a catalogação: {str(e)}")
+        return None
 
 # ============================
 # EXECUÇÃO PRINCIPAL
