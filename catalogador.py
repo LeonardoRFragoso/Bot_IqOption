@@ -10,7 +10,14 @@ from tqdm import tqdm
 # CONFIGURAÇÃO DE LOG AJUSTADA
 # ============================
 logger = logging.getLogger()
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.DEBUG)  # Alterado para DEBUG para capturar mais detalhes
+
+# Adicionando um handler de console para saída de log
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
 class GetCandlesFilter(logging.Filter):
     def filter(self, record):
@@ -27,8 +34,10 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
     """
     Obtém os pares disponíveis para negociação com filtro por tipo.
     """
+    logger.debug("Iniciando a função obter_pares_abertos")
     try:
         if not API:
+            logger.error("API não inicializada")
             return [], "API não inicializada"
         
         # Define tipos padrão se não especificados
@@ -66,7 +75,9 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
         tentativa = 0
         all_asset = None
         
+        logger.debug("Obtendo ativos com retry")
         while tentativa < max_tentativas and not all_asset:
+            logger.debug(f"Tentativa {tentativa + 1}/{max_tentativas} de obter ativos")
             try:
                 print(f"\n⏳ Tentativa {tentativa + 1}/{max_tentativas} de obter ativos...")
                 
@@ -154,8 +165,8 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
         return pares_disponiveis, None
         
     except Exception as e:
-        print(f"❌ Erro crítico ao obter pares: {str(e)}")
-        return [], f"Erro ao obter pares: {str(e)}"
+        logger.error(f"Erro ao obter pares: {str(e)}")
+        return [], str(e)
 
 def reconectar_api(API):
     """
@@ -169,7 +180,7 @@ def reconectar_api(API):
                 return API
         raise Exception("Falha na reconexão")
     except Exception as e:
-        print(f"❌ Erro na reconexão: {str(e)}")
+        logger.error(f"Erro na reconexão: {str(e)}")
         raise
 
 def analisar_velas(velas, tipo_estrategia):
@@ -200,7 +211,7 @@ def analisar_mhi(velas, i, resultados, timeframe=60):
         ]
         resultados = atualizar_resultados(entradas, direcao, resultados)
     except Exception as e:
-        print(f"Erro em analisar_mhi: {str(e)}")
+        logger.error(f"Erro em analisar_mhi: {str(e)}")
 
 def analisar_torres(velas, i, resultados):
     try:
@@ -214,7 +225,7 @@ def analisar_torres(velas, i, resultados):
         ]
         resultados = atualizar_resultados(entradas, direcao, resultados)
     except Exception as e:
-        print(f"Erro em analisar_torres: {str(e)}")
+        logger.error(f"Erro em analisar_torres: {str(e)}")
 
 def analisar_bb(velas, i, resultados):
     try:
@@ -252,7 +263,7 @@ def analisar_bb(velas, i, resultados):
         # Atualiza os resultados
         resultados = atualizar_resultados(entradas, direcao, resultados)
     except Exception as e:
-        print(f"Erro em analisar_bb: {str(e)}")
+        logger.error(f"Erro em analisar_bb: {str(e)}")
         # Mesmo com erro, tentamos não interromper o processo
 
 def atualizar_resultados(entradas, direcao, resultados):
@@ -379,7 +390,7 @@ def obter_resultados(API, pares):
                 
                 # Obtém velas com timeframe de 60 segundos (mais comum)
                 velas = API.get_candles(par, 60, 30, time.time())
-                
+
                 if not velas or len(velas) < 10:
                     continue
                 
@@ -428,6 +439,7 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
     Returns:
         tuple: (resultados_ordenados, linha)
     """
+    logger.debug("Iniciando a função de catalogação")
     max_tentativas = 3
     tentativas = 0
     
@@ -562,6 +574,7 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
     """
     Função principal de catalogação de ativos.
     """
+    logger.debug("Iniciando a função de catalogação")
     try:
         print("\n🔍 Iniciando processo de catalogação...")
         
@@ -595,13 +608,13 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
         
         resultados = []
         total_pares = len(pares)
+        logger.debug(f"Total de pares para análise: {total_pares}")
         
         # Cache de velas para evitar requisições repetidas
         cache_velas = {}
         
         for idx, par in enumerate(pares, 1):
-            print(f"\n🔄 Analisando par {idx}/{total_pares}: {par}")
-            
+            logger.debug(f"Analisando par {idx}/{total_pares}: {par}")
             try:
                 # Verifica se já temos as velas em cache
                 if par in cache_velas:
@@ -628,7 +641,7 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
                         
                         if resultado:
                             taxa_acerto = calcular_taxa_acerto(resultado)
-                            print(f"  ✅ {estrategia}: Taxa de acerto = {taxa_acerto:.1f}%")
+                            logger.debug(f"Taxa de acerto para {estrategia}: {taxa_acerto:.1f}%")
                             resultados.append({
                                 'par': par,
                                 'estrategia': estrategia,
@@ -637,21 +650,22 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
                             })
                             estrategias_analisadas += 1
                         else:
-                            print(f"  ⚠️ {estrategia}: Sem resultados válidos")
+                            logger.warning(f"{estrategia}: Sem resultados válidos para {par}")
                     except Exception as e:
-                        print(f"  ❌ Erro ao analisar estratégia {estrategia}: {str(e)}")
+                        logger.error(f"Erro ao analisar estratégia {estrategia}: {str(e)}")
                         continue
                 
                 print(f"✅ Par {par} analisado com {estrategias_analisadas} estratégias")
                 
             except Exception as e:
-                print(f"❌ Erro ao processar {par}: {str(e)}")
+                logger.error(f"Erro ao processar {par}: {str(e)}")
                 continue
             
             # Mostra progresso geral
             print(f"\n📊 Progresso: {idx}/{total_pares} pares ({(idx/total_pares*100):.1f}%)")
         
         print("\n✅ Catalogação concluída!")
+        logger.debug("Catalogação concluída")
         if resultados:
             print(f"\n📊 Resumo:")
             print(f"  • {len(pares)} pares analisados")
@@ -669,7 +683,7 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
             return None
             
     except Exception as e:
-        print(f"❌ Erro durante a catalogação: {str(e)}")
+        logger.error(f"Erro durante a catalogação: {str(e)}")
         return None
 
 def calcular_taxa_acerto(resultado):
@@ -683,6 +697,7 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
     """
     Função principal de catalogação de ativos.
     """
+    logger.debug("Iniciando a função de catalogação")
     try:
         print("\n🔍 Iniciando processo de catalogação...")
         
@@ -709,8 +724,10 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
         
         resultados = []
         total_pares = len(pares)
+        logger.debug(f"Total de pares para análise: {total_pares}")
         
         for idx, par in enumerate(pares, 1):
+            logger.debug(f"Analisando par {idx}/{total_pares}: {par}")
             print(f"\n🔄 Analisando par {idx}/{total_pares}: {par}")
             print(f"⏳ Obtendo velas...")
             
@@ -730,7 +747,7 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
                     
                     if resultado:
                         taxa_acerto = calcular_taxa_acerto(resultado)
-                        print(f"  ✅ {estrategia}: Taxa de acerto = {taxa_acerto:.1f}%")
+                        logger.debug(f"Taxa de acerto para {estrategia}: {taxa_acerto:.1f}%")
                         resultados.append({
                             'par': par,
                             'estrategia': estrategia,
@@ -738,13 +755,14 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
                             'detalhes': resultado
                         })
                     else:
-                        print(f"  ⚠️ {estrategia}: Sem resultados válidos")
+                        logger.warning(f"{estrategia}: Sem resultados válidos para {par}")
                 
             except Exception as e:
-                print(f"❌ Erro ao analisar {par}: {str(e)}")
+                logger.error(f"Erro ao analisar {par}: {str(e)}")
                 continue
         
         print("\n✅ Catalogação concluída!")
+        logger.debug("Catalogação concluída")
         if resultados:
             print(f"📊 Total de {len(resultados)} análises realizadas")
             return resultados
@@ -753,7 +771,7 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
             return None
             
     except Exception as e:
-        print(f"❌ Erro durante a catalogação: {str(e)}")
+        logger.error(f"Erro durante a catalogação: {str(e)}")
         return None
 
 # ============================
@@ -777,7 +795,7 @@ if __name__ == "__main__":
                     print(tabulate(catalog, headers=headers, tablefmt="pretty"))
                     break
                 except Exception as e:
-                    print(f"❌ Erro ao processar catálogo: {str(e)}")
+                    logger.error(f"Erro ao processar catálogo: {str(e)}")
                     tentativa += 1
                     time.sleep(5)
             else:
@@ -785,7 +803,7 @@ if __name__ == "__main__":
                 tentativa += 1
                 time.sleep(5)
         except Exception as e:
-            print(f"❌ Tentativa {tentativa+1}/{max_tentativas}: Erro inesperado: {str(e)}")
+            logger.error(f"Erro na tentativa {tentativa+1}/{max_tentativas}: {str(e)}")
             tentativa += 1
             time.sleep(5)
         finally:
