@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import logging
 import os
 from catalogador import catag, obter_pares_abertos
+from bot import detecta_pinbar, detecta_engolfo, detecta_zona_sr, detecta_fibo, valida_tendencia_macro, log_auditoria
 
 # Configuração de logging
 logging.basicConfig(
@@ -166,7 +167,8 @@ def load_config():
                 'stop_win': '15', 
                 'stop_loss': '15',
                 'analise_medias': 'N',
-                'velas_medias': '20'
+                'velas_medias': '20',
+                'tipo_par': 'Automático (Prioriza OTC)'
             }
             config['MARTINGALE'] = {'usar': 'N', 'niveis': '2', 'fator': '2.0'}
             config['SOROS'] = {'usar': 'N', 'niveis': '2'}
@@ -194,7 +196,8 @@ def save_config(config_data):
             'stop_win': str(config_data['stop_win']),
             'stop_loss': str(config_data['stop_loss']),
             'analise_medias': 'S' if config_data['analise_medias'] else 'N',
-            'velas_medias': str(config_data['velas_medias'])
+            'velas_medias': str(config_data['velas_medias']),
+            'tipo_par': config_data['tipo_par']
         }
         
         config['MARTINGALE'] = {
@@ -287,12 +290,28 @@ def get_payout(api, asset, option_type="binary"):
 # Função para executar o catalogador
 def run_catalogador(api):
     try:
-        log_message("Iniciando catalogação de ativos...")
-        catalog_results, line = catag(api)
-        log_message("Catalogação concluída com sucesso!", "success")
-        return catalog_results, line
+        log_message("Iniciando catalogação de ativos...", "info")
+        
+        # Carrega as configurações
+        config = load_config()
+        tipo_par = "Automático (Prioriza OTC)"
+        if config and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
+            tipo_par = config['AJUSTES']['tipo_par']
+        
+        # Executa o catalogador
+        resultados, linha = catag(api, tipo_par)
+        
+        if not resultados or len(resultados) == 0:
+            log_message("Nenhum resultado obtido na catalogação. Verifique se há pares disponíveis.", "error")
+            return None, 0
+            
+        st.session_state.catalog_results = resultados
+        st.session_state.catalog_line = linha
+        
+        log_message(f"Catalogação concluída. Encontrados {len(resultados)} resultados.", "success")
+        return resultados, linha
     except Exception as e:
-        log_message(f"Erro na catalogação: {str(e)}", "error")
+        log_message(f"Erro ao executar catalogação: {str(e)}", "error")
         return None, 0
 
 # Função para executar o bot de trading
@@ -313,6 +332,7 @@ def run_trading_bot(api, estrategia, ativo, config_data):
         stop_loss = float(config_data['stop_loss'])
         analise_medias = config_data['analise_medias']
         velas_medias = int(config_data['velas_medias'])
+        tipo_par = config_data['tipo_par']
         
         # Configurações de Martingale
         usar_martingale = config_data['usar_martingale']
@@ -667,6 +687,118 @@ def run_trading_bot(api, estrategia, ativo, config_data):
                     else:
                         # Aguarda o momento certo
                         time.sleep(1)
+                
+                # Estratégia BB
+                elif estrategia == "BB":
+                    # Verifica se está no momento correto para análise (minuto divisível por 5 e segundos entre 0 e 4)
+                    agora = datetime.fromtimestamp(api.get_server_timestamp())
+                    minuto = agora.minute
+                    segundo = agora.second
+                    
+                    # Para M5, disparamos a análise quando o minuto é divisível por 5 e os segundos estão entre 0 e 4
+                    if (minuto % 5 == 0) and (segundo < 5):
+                        log_message("Iniciando análise da estratégia BB (M5)", "info")
+                        
+                        # Valida tendência macro antes de operar
+                        if not valida_tendencia_macro(ativo):
+                            log_message("Tendência macro não confirmada, operação abortada.", "warning")
+                            time.sleep(5)
+                            continue
+
+                        # Obtém os candles para análise
+                        timeframe = 300            # M5: 300 segundos
+                        quantidade_candles = 60
+                        timestamp_atual = time.time()
+                        candles = api.get_candles(ativo, timeframe, quantidade_candles, timestamp_atual)
+                        
+                        if candles is None or len(candles) < 50:
+                            log_message("Número insuficiente de candles para análise BB", "error")
+                            time.sleep(5)
+                            continue
+
+                        # Cálculo da média BB50
+                        closes = [candle['close'] for candle in candles]
+                        media_50 = sum(closes[-50:]) / 50
+
+                        # Seleciona a última candle e a penúltima para análise
+                        ultima_candle = candles[-1]
+                        penultima_candle = candles[-2]
+
+                        open_last = ultima_candle['open']
+                        close_last = ultima_candle['close']
+                        high_last = ultima_candle['max']
+                        low_last = ultima_candle['min']
+                        corpo_last = abs(close_last - open_last)
+                        tamanho_last = high_last - low_last if (high_last - low_last) != 0 else 1
+                        candle_forca = (corpo_last / tamanho_last) > 0.6
+
+                        # Logs detalhados para auditoria
+                        log_message(f"Fechamento: {close_last}, Média BB50: {media_50}", "info")
+                        log_message(f"Candle atual: open={open_last}, close={close_last}, high={high_last}, low={low_last}", "info")
+                        log_message(f"Candle de força? {'Sim' if candle_forca else 'Não'}", "info")
+
+                        # Detecta padrões de reversão
+                        sinal_pinbar = detecta_pinbar(ultima_candle)
+                        sinal_engolfo = detecta_engolfo(ultima_candle, penultima_candle)
+                        zona_sr = detecta_zona_sr(candles)
+                        fibo_levels = detecta_fibo(candles, num=10)
+
+                        direcao = None
+                        sinal_info = ""
+                        
+                        # Lógica: se candle de força e fechamento em relação à média BB50
+                        if candle_forca:
+                            if close_last < media_50:
+                                direcao = "call"
+                                sinal_info = "Reversão para alta detectada: candle de força com fechamento abaixo da média BB50."
+                            elif close_last > media_50:
+                                direcao = "put"
+                                sinal_info = "Reversão para baixa detectada: candle de força com fechamento acima da média BB50."
+
+                        if sinal_pinbar:
+                            sinal_info += " Padrão Pinbar identificado."
+                            log_message("Padrão Pinbar identificado", "info")
+                        if sinal_engolfo:
+                            sinal_info += " Padrão Engolfo identificado."
+                            log_message("Padrão Engolfo identificado", "info")
+                        if zona_sr:
+                            sinal_info += " Zona de suporte/resistência validada."
+                            log_message("Zona de suporte/resistência validada", "info")
+
+                        # Exibe níveis de Fibonacci
+                        log_message(f"Níveis Fibonacci calculados: {fibo_levels}", "info")
+                        
+                        if direcao is not None:
+                            log_message(f"Sinal: {sinal_info}", "operation")
+                            log_auditoria(sinal_info, ativo, "BB")
+                            
+                            # Para M5, passamos expiração de 5 minutos
+                            win, lucro = compra(ativo, valor_entrada, direcao, 5, tipo_op)
+                            
+                            # Gerencia martingale se necessário
+                            if not win and martingale > 0:
+                                valor_mg = valor_entrada
+                                
+                                for i in range(martingale):
+                                    log_message(f"Iniciando martingale nível {i+1}", "warning")
+                                    valor_mg = valor_mg * fator_mg
+                                    
+                                    win_mg, lucro_mg = compra(ativo, valor_mg, direcao, 5, tipo_op)
+                                    
+                                    if win_mg:
+                                        log_message(f"Martingale {i+1} recuperou operação!", "success")
+                                        break
+                                    
+                                    if i == martingale - 1:
+                                        log_message("Todos os níveis de martingale perdidos", "error")
+                        else:
+                            log_message("Nenhum sinal acionado no momento.", "warning")
+
+                        # Aguarda para próxima análise
+                        time.sleep(5)
+                    else:
+                        # Aguarda o momento certo
+                        time.sleep(0.5)
             
             except Exception as e:
                 log_message(f"Erro na execução do bot: {str(e)}", "error")
@@ -783,6 +915,21 @@ with st.sidebar:
             "Usar Análise de Médias", 
             value=True if config and 'AJUSTES' in config and config['AJUSTES']['analise_medias'] == 'S' else False
         )
+        
+        tipo_par = st.selectbox(
+            "Tipo de Par", 
+            [
+                "Automático (Prioriza OTC)", 
+                "Apenas OTC", 
+                "Apenas Normais"
+            ], 
+            index=0 if not config or 'AJUSTES' not in config or 'tipo_par' not in config['AJUSTES'] else 
+                  [
+                      "Automático (Prioriza OTC)", 
+                      "Apenas OTC", 
+                      "Apenas Normais"
+                  ].index(config['AJUSTES']['tipo_par'])
+        )
     
     # Seção de Martingale
     with st.expander("Configurações de Martingale", expanded=False):
@@ -867,6 +1014,7 @@ with st.sidebar:
             'stop_loss': stop_loss,
             'analise_medias': analise_medias,
             'velas_medias': velas_medias,
+            'tipo_par': tipo_par,
             'usar_martingale': usar_martingale,
             'niveis_martingale': niveis_martingale,
             'fator_martingale': fator_martingale,
@@ -969,7 +1117,7 @@ if st.session_state.connected:
         col1, col2 = st.columns(2)
         
         with col1:
-            estrategia_options = ["MHI", "Torres Gêmeas", "MHI M5"]
+            estrategia_options = ["MHI", "Torres Gêmeas", "MHI M5", "BB"]
             estrategia = st.selectbox(
                 "Selecione a Estratégia", 
                 estrategia_options,
@@ -1032,6 +1180,7 @@ if st.session_state.connected:
                                 'stop_loss': stop_loss,
                                 'analise_medias': analise_medias,
                                 'velas_medias': velas_medias,
+                                'tipo_par': tipo_par,
                                 'usar_martingale': usar_martingale,
                                 'niveis_martingale': niveis_martingale,
                                 'fator_martingale': fator_martingale,
