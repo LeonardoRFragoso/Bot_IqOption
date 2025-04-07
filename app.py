@@ -12,7 +12,179 @@ import plotly.graph_objects as go
 import logging
 import os
 from catalogador import catag, obter_pares_abertos
-from bot import detecta_pinbar, detecta_engolfo, detecta_zona_sr, detecta_fibo, valida_tendencia_macro, log_auditoria
+
+# Implementação das funções auxiliares para a estratégia BB
+def detecta_pinbar(candle):
+    """
+    Detecta padrão Pinbar em um candle.
+    Um Pinbar tem um corpo pequeno e uma sombra longa em uma direção.
+    """
+    open_price = candle['open']
+    close_price = candle['close']
+    high_price = candle['max']
+    low_price = candle['min']
+    
+    corpo = abs(close_price - open_price)
+    tamanho_total = high_price - low_price
+    
+    # Evitar divisão por zero
+    if tamanho_total == 0:
+        return False
+    
+    # Corpo deve ser pequeno (menos de 30% do tamanho total)
+    if corpo / tamanho_total > 0.3:
+        return False
+    
+    # Verificar se tem uma sombra longa
+    if close_price > open_price:  # Candle de alta
+        sombra_inferior = open_price - low_price
+        return sombra_inferior / tamanho_total > 0.6
+    else:  # Candle de baixa
+        sombra_superior = high_price - open_price
+        return sombra_superior / tamanho_total > 0.6
+
+def detecta_engolfo(candle_atual, candle_anterior):
+    """
+    Detecta padrão de Engolfo entre dois candles consecutivos.
+    Um Engolfo ocorre quando o corpo do candle atual "engole" completamente o corpo do candle anterior.
+    """
+    # Corpo do candle atual
+    corpo_atual = abs(candle_atual['close'] - candle_atual['open'])
+    # Corpo do candle anterior
+    corpo_anterior = abs(candle_anterior['close'] - candle_anterior['open'])
+    
+    # Verificar se o corpo atual é maior que o anterior
+    if corpo_atual <= corpo_anterior:
+        return False
+    
+    # Verificar se há engolfo de alta
+    if candle_atual['close'] > candle_atual['open']:  # Candle atual de alta
+        if candle_anterior['close'] < candle_anterior['open']:  # Candle anterior de baixa
+            return (candle_atual['open'] <= candle_anterior['close'] and 
+                   candle_atual['close'] >= candle_anterior['open'])
+    
+    # Verificar se há engolfo de baixa
+    if candle_atual['close'] < candle_atual['open']:  # Candle atual de baixa
+        if candle_anterior['close'] > candle_anterior['open']:  # Candle anterior de alta
+            return (candle_atual['open'] >= candle_anterior['close'] and 
+                   candle_atual['close'] <= candle_anterior['open'])
+    
+    return False
+
+def detecta_zona_sr(candles, num=10):
+    """
+    Detecta zonas de suporte e resistência baseadas nos últimos candles.
+    Retorna True se o último candle estiver próximo a uma zona S/R.
+    """
+    if len(candles) < num:
+        return False
+    
+    # Pegar os últimos N candles para análise
+    ultimos_candles = candles[-num:]
+    
+    # Encontrar máximos e mínimos locais
+    maximos = [c['max'] for c in ultimos_candles]
+    minimos = [c['min'] for c in ultimos_candles]
+    
+    # Calcular médias para identificar zonas
+    media_max = sum(maximos) / len(maximos)
+    media_min = sum(minimos) / len(minimos)
+    
+    # Último candle
+    ultimo_candle = candles[-1]
+    preco_atual = ultimo_candle['close']
+    
+    # Definir margem de proximidade (2% do preço)
+    margem = preco_atual * 0.02
+    
+    # Verificar se o preço atual está próximo a uma zona S/R
+    return (abs(preco_atual - media_max) < margem or 
+            abs(preco_atual - media_min) < margem)
+
+def detecta_fibo(candles, num=10):
+    """
+    Calcula os níveis de Fibonacci com base nos últimos candles.
+    Retorna um dicionário com os níveis calculados.
+    """
+    if len(candles) < num:
+        return {}
+    
+    # Pegar os últimos N candles para análise
+    ultimos_candles = candles[-num:]
+    
+    # Encontrar máximo e mínimo no período
+    maxima = max([c['max'] for c in ultimos_candles])
+    minima = min([c['min'] for c in ultimos_candles])
+    
+    # Calcular a amplitude do movimento
+    amplitude = maxima - minima
+    
+    # Calcular níveis de Fibonacci
+    fibo_levels = {
+        '0.0': minima,
+        '0.236': minima + 0.236 * amplitude,
+        '0.382': minima + 0.382 * amplitude,
+        '0.5': minima + 0.5 * amplitude,
+        '0.618': minima + 0.618 * amplitude,
+        '0.786': minima + 0.786 * amplitude,
+        '1.0': maxima
+    }
+    
+    return fibo_levels
+
+def valida_tendencia_macro(api, ativo, timeframe=300, num_candles=100):
+    """
+    Valida a tendência macro do ativo usando médias móveis de longo prazo.
+    Retorna True se a tendência for considerada estável.
+    """
+    try:
+        # Obter candles para análise de tendência
+        timestamp_atual = time.time()
+        candles = api.get_candles(ativo, timeframe, num_candles, timestamp_atual)
+        
+        if candles is None or len(candles) < 50:
+            log_message("Dados insuficientes para análise de tendência macro", "warning")
+            return True  # Por padrão, permitimos a operação
+        
+        # Calcular médias móveis
+        closes = [candle['close'] for candle in candles]
+        
+        # Média móvel de 20 períodos
+        ma20 = sum(closes[-20:]) / 20
+        # Média móvel de 50 períodos
+        ma50 = sum(closes[-50:]) / 50
+        
+        # Verificar se o preço atual está acima das médias (tendência de alta)
+        preco_atual = closes[-1]
+        tendencia_alta = preco_atual > ma20 and ma20 > ma50
+        
+        # Verificar se o preço atual está abaixo das médias (tendência de baixa)
+        tendencia_baixa = preco_atual < ma20 and ma20 < ma50
+        
+        # Verificar a volatilidade (desvio padrão dos últimos 20 períodos)
+        desvio_padrao = (sum([(close - ma20) ** 2 for close in closes[-20:]]) / 20) ** 0.5
+        volatilidade_normal = desvio_padrao / ma20 < 0.03  # 3% é considerado normal
+        
+        # Retorna True se temos uma tendência clara e volatilidade normal
+        return (tendencia_alta or tendencia_baixa) and volatilidade_normal
+        
+    except Exception as e:
+        log_message(f"Erro ao validar tendência macro: {str(e)}", "error")
+        return True  # Em caso de erro, permitimos a operação
+
+def log_auditoria(mensagem, ativo, estrategia):
+    """
+    Registra informações de auditoria em um arquivo CSV.
+    """
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open("auditoria_sinais.csv", "a") as arquivo:
+            # Se o arquivo estiver vazio, adicionar cabeçalho
+            if arquivo.tell() == 0:
+                arquivo.write("Timestamp,Ativo,Estrategia,Mensagem\n")
+            arquivo.write(f"{timestamp},{ativo},{estrategia},{mensagem}\n")
+    except Exception as e:
+        log_message(f"Erro ao registrar auditoria: {str(e)}", "error")
 
 # Configuração de logging
 logging.basicConfig(
@@ -224,35 +396,66 @@ def save_config(config_data):
 # Função para conectar à IQ Option
 def connect_iqoption(email, senha, conta):
     try:
-        log_message("Iniciando conexão com a IQ Option...")
+        log_message(f"Iniciando conexão com a IQ Option... Tipo de conta selecionada: {conta}")
         api = IQ_Option(email, senha)
-        check, reason = api.connect()
         
-        if check:
-            log_message("Conectado com sucesso!", "success")
-            
-            # Seleciona a conta (demo ou real)
+        # Tenta conectar com retry
+        retry_count = 0
+        max_retries = 3
+        connected = False
+        
+        while not connected and retry_count < max_retries:
+            try:
+                check, reason = api.connect()
+                if check:
+                    connected = True
+                    log_message("Conectado com sucesso!", "success")
+                else:
+                    retry_count += 1
+                    log_message(f"Tentativa {retry_count}/{max_retries} falhou: {reason}", "warning")
+                    time.sleep(2)  # Aguarda 2 segundos antes de tentar novamente
+            except Exception as e:
+                retry_count += 1
+                log_message(f"Erro na tentativa {retry_count}/{max_retries}: {str(e)}", "warning")
+                time.sleep(2)
+        
+        if not connected:
+            log_message("Todas as tentativas de conexão falharam", "error")
+            return None
+        
+        # Seleciona a conta (demo ou real)
+        try:
             if conta == "Demo":
+                log_message("Alterando para conta DEMO...", "info")
                 api.change_balance("PRACTICE")
-                log_message("Conta DEMO selecionada", "info")
+                log_message("Conta DEMO selecionada com sucesso", "info")
             else:
+                log_message("Alterando para conta REAL...", "warning")
                 api.change_balance("REAL")
-                log_message("Conta REAL selecionada", "warning")
-            
-            # Obtém informações do perfil
+                log_message("Conta REAL selecionada com sucesso", "warning")
+        except Exception as e:
+            log_message(f"Erro ao selecionar tipo de conta: {str(e)}", "error")
+            # Tenta novamente com um fallback para PRACTICE
+            try:
+                api.change_balance("PRACTICE")
+                log_message("Fallback para conta DEMO realizado", "warning")
+            except:
+                log_message("Não foi possível selecionar nenhum tipo de conta", "error")
+                return None
+        
+        # Obtém informações do perfil
+        try:
             perfil = json.loads(json.dumps(api.get_profile_ansyc()))
             st.session_state.nome = str(perfil['name'])
             st.session_state.cifrao = str(perfil['currency_char'])
             st.session_state.saldo = float(api.get_balance())
             
             log_message(f"Bem-vindo {st.session_state.nome}! Saldo atual: {st.session_state.cifrao} {st.session_state.saldo}")
+            log_message(f"Tipo de conta atual: {api.get_balance_mode()}", "info")
             
             return api
-        else:
-            if "invalid_credentials" in reason:
-                log_message("Email ou senha incorretos. Verifique suas credenciais.", "error")
-            else:
-                log_message(f"Erro na conexão: {reason}", "error")
+        except Exception as e:
+            log_message(f"Erro ao obter informações do perfil: {str(e)}", "error")
             return None
     except Exception as e:
         log_message(f"Exceção ao conectar: {str(e)}", "error")
@@ -700,7 +903,7 @@ def run_trading_bot(api, estrategia, ativo, config_data):
                         log_message("Iniciando análise da estratégia BB (M5)", "info")
                         
                         # Valida tendência macro antes de operar
-                        if not valida_tendencia_macro(ativo):
+                        if not valida_tendencia_macro(api, ativo):
                             log_message("Tendência macro não confirmada, operação abortada.", "warning")
                             time.sleep(5)
                             continue
