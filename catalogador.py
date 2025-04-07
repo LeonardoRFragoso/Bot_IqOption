@@ -347,8 +347,10 @@ def obter_resultados(API, pares):
         if pares and len(pares) > 0:
             print("⚠️ Criando resultados de emergência para permitir operação...")
             par = pares[0]
-            resultados.append(["MHI", par, 60.0, 50.0, 40.0])
-            resultados.append(["BB", par, 60.0, 50.0, 40.0])
+            resultados = [
+                ["MHI", par, 60.0, 50.0, 40.0],
+                ["BB", par, 60.0, 50.0, 40.0]
+            ]
         
         return resultados
     
@@ -390,14 +392,18 @@ def catag(API, tipo_par="Automático (Prioriza OTC)", config=None):
             # Carrega a configuração com tratamento de erro
             if config is None:
                 try:
+                    print("⚠️ Configuração não fornecida, carregando do arquivo...")
                     config = ConfigObj('config.txt')
                 except Exception as e:
                     print(f"⚠️ Erro ao carregar configuração: {str(e)}. Usando valores padrão.")
                     config = {'MARTINGALE': {'usar': 'N', 'niveis': '2'}, 'AJUSTES': {}}
+            else:
+                print("✅ Usando configuração fornecida (cache)")
             
             # Se não foi passado um tipo_par, tenta ler da configuração
             if tipo_par == "Automático (Prioriza OTC)" and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
                 tipo_par = config['AJUSTES']['tipo_par']
+                print(f"✅ Usando tipo de par da configuração: {tipo_par}")
             
             # Tenta obter pares com diferentes estratégias
             pares = []
