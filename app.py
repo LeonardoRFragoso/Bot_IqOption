@@ -7,49 +7,26 @@ from iqoptionapi.stable_api import IQ_Option
 from tabulate import tabulate
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
-import plotly.express as px
-import warnings
 import logging
-from catalogador import catag, obter_pares_abertos, obter_resultados
+import os
+from catalogador import catag, obter_pares_abertos
 
-# Suprimir avisos específicos do Streamlit sobre ScriptRunContext
-logging.getLogger('streamlit.runtime.scriptrunner.script_runner').setLevel(logging.CRITICAL)
-logging.getLogger('streamlit').setLevel(logging.ERROR)
-warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
-warnings.filterwarnings("ignore", message=".*Thread.*")
-
-# Configurar um logger personalizado para o bot
-bot_logger = logging.getLogger('bot_iqoption')
-bot_logger.setLevel(logging.INFO)
-bot_logger.propagate = False  # Impedir propagação para evitar duplicação
-
-# Remover handlers existentes para evitar duplicação
-if bot_logger.handlers:
-    bot_logger.handlers.clear()
-
-# Handler para console
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-console_handler.setFormatter(console_formatter)
-bot_logger.addHandler(console_handler)
-
-# Handler para arquivo
-try:
-    file_handler = logging.FileHandler('bot_log.txt')
-    file_handler.setLevel(logging.INFO)
-    file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    file_handler.setFormatter(file_formatter)
-    bot_logger.addHandler(file_handler)
-except:
-    pass  # Se não conseguir criar o arquivo de log, apenas continue
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot_log.txt"),
+        logging.StreamHandler()
+    ]
+)
 
 # Configuração da página
 st.set_page_config(
     page_title="Bot IQ Option Trader",
-    page_icon="",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -65,7 +42,7 @@ st.markdown("""
     
     /* Cabeçalhos */
     .main-header {
-        font-size: 2.8rem;
+        font-size: 2.5rem;
         background: linear-gradient(90deg, #0078ff, #00bfff);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
@@ -79,7 +56,7 @@ st.markdown("""
         background: linear-gradient(90deg, #0078ff, #00bfff);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        margin-top: 2rem;
+        margin-top: 1.5rem;
         font-weight: 600;
     }
     
@@ -99,16 +76,6 @@ st.markdown("""
         font-weight: bold;
     }
     
-    /* Containers */
-    .dashboard-container {
-        background-color: rgba(30, 30, 46, 0.7);
-        border-radius: 10px;
-        padding: 20px;
-        border: 1px solid #3D3D60;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin-bottom: 20px;
-    }
-    
     /* Cards */
     .card {
         background-color: rgba(45, 45, 68, 0.7);
@@ -119,1665 +86,1105 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
     
-    .card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
-    }
-    
-    /* Sidebar */
-    .css-1d391kg, .css-1lcbmhc {
-        background-color: rgba(25, 25, 35, 0.9);
-    }
-    
-    /* Botões */
-    .stButton>button {
-        background: linear-gradient(90deg, #0078ff, #00bfff);
-        color: white;
-        border: none;
-        border-radius: 5px;
-        padding: 0.5rem 1rem;
-        font-weight: bold;
-        transition: all 0.3s;
-    }
-    
-    .stButton>button:hover {
-        background: linear-gradient(90deg, #00bfff, #0078ff);
-        box-shadow: 0 0 10px rgba(0, 191, 255, 0.5);
-        transform: translateY(-2px);
-    }
-    
-    /* Inputs */
-    .stTextInput>div>div>input, .stNumberInput>div>div>input {
-        background-color: rgba(45, 45, 68, 0.7);
-        border: 1px solid #3D3D60;
-        color: #E0E0E0;
-        border-radius: 5px;
-    }
-    
-    /* Selectbox */
-    .stSelectbox>div>div {
-        background-color: rgba(45, 45, 68, 0.7);
-        border: 1px solid #3D3D60;
-        color: #E0E0E0;
-        border-radius: 5px;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background-color: rgba(45, 45, 68, 0.7);
-        border: 1px solid #3D3D60;
-        border-radius: 5px;
-        color: #E0E0E0;
-    }
-    
-    /* Métricas */
-    .stMetric {
-        background-color: rgba(45, 45, 68, 0.7);
-        border: 1px solid #3D3D60;
-        border-radius: 10px;
-        padding: 10px;
-        transition: all 0.3s ease;
-    }
-    
-    .stMetric:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2);
-    }
-    
-    /* Tabelas */
-    .dataframe {
-        background-color: rgba(45, 45, 68, 0.7);
-        border: 1px solid #3D3D60;
-        border-radius: 5px;
-        color: #E0E0E0;
-    }
-    
-    /* Scrollbar */
-    ::-webkit-scrollbar {
-        width: 10px;
-        background-color: #1E1E2E;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background-color: #3D3D60;
-        border-radius: 5px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background-color: #4D4D80;
-    }
-    
-    /* Divisor */
-    hr {
-        border-color: #3D3D60;
-        margin: 20px 0;
-    }
-    
-    /* Animação de loading */
-    .stSpinner>div {
-        border-top-color: #00bfff !important;
-    }
-    
-    /* Animação de pulsação */
-    @keyframes pulse {
-        0% {
-            box-shadow: 0 0 0 0 rgba(0, 191, 255, 0.7);
-        }
-        70% {
-            box-shadow: 0 0 0 10px rgba(0, 191, 255, 0);
-        }
-        100% {
-            box-shadow: 0 0 0 0 rgba(0, 191, 255, 0);
-        }
-    }
-    
-    .pulse {
-        animation: pulse 2s infinite;
-    }
-    
-    /* Estilo para o log */
+    /* Log container */
     .log-container {
+        background-color: rgba(30, 30, 46, 0.7);
+        border-radius: 5px;
+        padding: 10px;
         height: 300px;
         overflow-y: auto;
-        background-color: rgba(25, 25, 35, 0.9);
-        padding: 15px;
-        border-radius: 10px;
+        font-family: monospace;
         border: 1px solid #3D3D60;
-        font-family: 'Consolas', monospace;
-        font-size: 0.9rem;
-        line-height: 1.5;
-    }
-    
-    /* Estilo para tabelas de estatísticas */
-    .stats-table {
-        width: 100%;
-        border-collapse: collapse;
-    }
-    
-    .stats-table tr {
-        border-bottom: 1px solid rgba(61, 61, 96, 0.5);
-    }
-    
-    .stats-table tr:last-child {
-        border-bottom: none;
-    }
-    
-    .stats-table td {
-        padding: 8px 4px;
-    }
-    
-    .stats-table td:first-child {
-        font-weight: bold;
-        color: #CCCCCC;
-    }
-    
-    .stats-table td:last-child {
-        text-align: right;
-        color: #E0E0E0;
-    }
-    
-    /* Estilo para cards de estatísticas */
-    .stats-card {
-        background-color: rgba(45, 45, 68, 0.7);
-        border-radius: 10px;
-        padding: 15px;
-        border: 1px solid #3D3D60;
-        margin-bottom: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    
-    .stats-card h4 {
-        text-align: center;
-        margin-bottom: 10px;
-        color: #00bfff;
-        font-size: 1.2rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# Inicialização de variáveis de estado da sessão
+if "connected" not in st.session_state:
+    st.session_state.connected = False
+if "API" not in st.session_state:
+    st.session_state.API = None
+if "bot_running" not in st.session_state:
+    st.session_state.bot_running = False
+if "stop_bot" not in st.session_state:
+    st.session_state.stop_bot = False
+if "operations" not in st.session_state:
+    st.session_state.operations = []
+if "log_messages" not in st.session_state:
+    st.session_state.log_messages = []
+if "catalog_results" not in st.session_state:
+    st.session_state.catalog_results = None
+if "catalog_line" not in st.session_state:
+    st.session_state.catalog_line = 0
+if "lucro_total" not in st.session_state:
+    st.session_state.lucro_total = 0
+if "wins" not in st.session_state:
+    st.session_state.wins = 0
+if "losses" not in st.session_state:
+    st.session_state.losses = 0
+if "total_ops" not in st.session_state:
+    st.session_state.total_ops = 0
+
 # Título principal
 st.markdown("<h1 class='main-header'>Bot Trader IQ Option</h1>", unsafe_allow_html=True)
 
-# Variável global para controle do bot
-BOT_RUNNING = False
-
-# Variáveis para comunicação entre threads
-if "bot_messages" not in st.session_state:
-    st.session_state.bot_messages = []
-if "bot_lucro_total" not in st.session_state:
-    st.session_state.bot_lucro_total = 0.0
-if "bot_wins" not in st.session_state:
-    st.session_state.bot_wins = 0
-if "bot_losses" not in st.session_state:
-    st.session_state.bot_losses = 0
-if "bot_empates" not in st.session_state:
-    st.session_state.bot_empates = 0
-if "bot_total_ops" not in st.session_state:
-    st.session_state.bot_total_ops = 0
-if "bot_historico" not in st.session_state:
-    st.session_state.bot_historico = []
-if "log" not in st.session_state:
-    st.session_state.log = []
-
-# Função auxiliar para acessar session_state com segurança
-def safe_session_state_update(key, value):
-    try:
-        if key not in st.session_state:
-            st.session_state[key] = value
-        else:
-            st.session_state[key] = value
-    except Exception as e:
-        bot_logger.error(f"Erro ao atualizar session_state[{key}]: {str(e)}")
-
-# Função auxiliar para incrementar session_state com segurança
-def safe_session_state_increment(key):
-    try:
-        if key not in st.session_state:
-            st.session_state[key] = 1
-        else:
-            st.session_state[key] += 1
-    except Exception as e:
-        bot_logger.error(f"Erro ao incrementar session_state[{key}]: {str(e)}")
-
-# Função auxiliar para adicionar ao histórico com segurança
-def safe_add_to_historico(item):
-    try:
-        if "bot_historico" not in st.session_state:
-            st.session_state.bot_historico = []
-        st.session_state.bot_historico.append(item)
-    except Exception as e:
-        bot_logger.error(f"Erro ao adicionar ao histórico: {str(e)}")
-
-# -----------------------------------------------------------------------------
-# Função para registrar mensagens no log do dashboard
-def log_message(msg, show_in_ui=True):
-    timestamp = datetime.now().strftime('%H:%M:%S')
-    if "log" not in st.session_state:
-        st.session_state.log = []
-    st.session_state.log.append(f"{timestamp} - {msg}")
+# Função para adicionar mensagens ao log
+def log_message(message, message_type="info"):
+    timestamp = datetime.now().strftime("%H:%M:%S")
     
-    # Usar o logger personalizado para evitar avisos de ScriptRunContext
-    # Evita duplicação de logs ao usar apenas o logger personalizado
-    bot_logger.info(msg)
-    
-    # Para comunicação entre threads - Apenas atualiza contadores, não duplica logs
-    if "bot_messages" in st.session_state:
-        # Não adiciona a mensagem novamente, apenas atualiza os contadores
-        # st.session_state.bot_messages.append(f"{timestamp} - {msg}")
-        
-        # Atualiza contadores baseados na mensagem
-        if "WIN" in msg:
-            # Verificar se as variáveis existem antes de incrementar
-            if "bot_wins" not in st.session_state:
-                st.session_state.bot_wins = 1
-            else:
-                st.session_state.bot_wins += 1
-                
-            if "bot_total_ops" not in st.session_state:
-                st.session_state.bot_total_ops = 1
-            else:
-                st.session_state.bot_total_ops += 1
-                
-        elif "LOSS" in msg:
-            # Verificar se as variáveis existem antes de incrementar
-            if "bot_losses" not in st.session_state:
-                st.session_state.bot_losses = 1
-            else:
-                st.session_state.bot_losses += 1
-                
-            if "bot_total_ops" not in st.session_state:
-                st.session_state.bot_total_ops = 1
-            else:
-                st.session_state.bot_total_ops += 1
-                
-        elif "EMPATE" in msg:
-            # Verificar se as variáveis existem antes de incrementar
-            if "bot_empates" not in st.session_state:
-                st.session_state.bot_empates = 1
-            else:
-                st.session_state.bot_empates += 1
-                
-            if "bot_total_ops" not in st.session_state:
-                st.session_state.bot_total_ops = 1
-            else:
-                st.session_state.bot_total_ops += 1
-        
-        # Atualiza lucro total
-        if "Lucro Total:" in msg:
-            try:
-                if "bot_lucro_total" not in st.session_state:
-                    st.session_state.bot_lucro_total = 0.0
-                st.session_state.bot_lucro_total = float(msg.split("Lucro Total:")[1].strip())
-            except:
-                pass
-
-    if show_in_ui:
-        # Atualiza o log no dashboard
-        log_container = st.empty()
-        log_text = ""
-        for log in st.session_state.log:
-            if "WIN" in log:
-                log_text += f"<span style='color: #28a745;'>{log}</span><br>"
-            elif "LOSS" in log:
-                log_text += f"<span style='color: #dc3545;'>{log}</span><br>"
-            elif "EMPATE" in log:
-                log_text += f"<span style='color: #ffc107;'>{log}</span><br>"
-            elif "STOP" in log:
-                log_text += f"<span style='color: #17a2b8; font-weight: bold;'>{log}</span><br>"
-            elif "Entrada" in log:
-                log_text += f"<span style='color: #9370DB;'>{log}</span><br>"
-            else:
-                log_text += f"<span style='color: #E0E0E0;'>{log}</span><br>"
-        
-        log_container.markdown(f"""
-        <div class="log-container">
-            {log_text}
-        </div>
-        """, unsafe_allow_html=True)
-
-# -----------------------------------------------------------------------------
-# Função para validar configurações
-def validar_configuracoes():
-    """Valida as configurações antes de iniciar o bot"""
-    mensagens = []
-    
-    # Validar credenciais
-    if not st.session_state.get("email") or not st.session_state.get("senha"):
-        mensagens.append("Email e senha são obrigatórios")
-    
-    # Validar valores numéricos
-    try:
-        valor_entrada = float(st.session_state.get("valor_entrada", 0))
-        if valor_entrada <= 0:
-            mensagens.append("Valor de entrada deve ser maior que zero")
-    except:
-        mensagens.append("Valor de entrada inválido")
-    
-    try:
-        stop_win = float(st.session_state.get("stop_win", 0))
-        if stop_win <= 0:
-            mensagens.append("Stop Win deve ser maior que zero")
-    except:
-        mensagens.append("Stop Win inválido")
-    
-    try:
-        stop_loss = float(st.session_state.get("stop_loss", 0))
-        if stop_loss <= 0:
-            mensagens.append("Stop Loss deve ser maior que zero")
-    except:
-        mensagens.append("Stop Loss inválido")
-    
-    # Validar estratégia e ativo
-    estrategia = st.session_state.get("estrategia_choice")
-    if not estrategia:
-        mensagens.append("Selecione uma estratégia")
-    
-    ativo = st.session_state.get("ativo_input")
-    if not ativo:
-        mensagens.append("Selecione ou digite um ativo")
-    
-    return mensagens
-
-# Função para carregar configurações com verificação
-def carregar_configuracoes_seguras():
-    """Carrega configurações com verificação de existência de chaves"""
-    try:
-        config = ConfigObj('config.txt', encoding='utf-8')
-        
-        # Verificar e criar seções se não existirem
-        if 'LOGIN' not in config:
-            config['LOGIN'] = {}
-        if 'AJUSTES' not in config:
-            config['AJUSTES'] = {}
-        if 'MARTINGALE' not in config:
-            config['MARTINGALE'] = {}
-        if 'SOROS' not in config:
-            config['SOROS'] = {}
-        
-        # Definir valores padrão para chaves ausentes
-        # LOGIN
-        if 'email' not in config['LOGIN']:
-            config['LOGIN']['email'] = ""
-        if 'senha' not in config['LOGIN']:
-            config['LOGIN']['senha'] = ""
-        
-        # AJUSTES
-        if 'tipo' not in config['AJUSTES']:
-            config['AJUSTES']['tipo'] = "automatico"
-        if 'valor_entrada' not in config['AJUSTES']:
-            config['AJUSTES']['valor_entrada'] = "2.0"
-        if 'stop_win' not in config['AJUSTES']:
-            config['AJUSTES']['stop_win'] = "20.0"
-        if 'stop_loss' not in config['AJUSTES']:
-            config['AJUSTES']['stop_loss'] = "10.0"
-        if 'estrategia' not in config['AJUSTES']:
-            config['AJUSTES']['estrategia'] = "MHI"
-        if 'ativo' not in config['AJUSTES']:
-            config['AJUSTES']['ativo'] = ""
-        if 'analise_medias' not in config['AJUSTES']:
-            config['AJUSTES']['analise_medias'] = "N"
-        if 'velas_medias' not in config['AJUSTES']:
-            config['AJUSTES']['velas_medias'] = "20"
-        
-        # MARTINGALE
-        if 'usar' not in config['MARTINGALE']:
-            config['MARTINGALE']['usar'] = "N"
-        if 'niveis' not in config['MARTINGALE']:
-            config['MARTINGALE']['niveis'] = "1"
-        if 'fator' not in config['MARTINGALE']:
-            config['MARTINGALE']['fator'] = "2.0"
-        
-        # SOROS
-        if 'usar' not in config['SOROS']:
-            config['SOROS']['usar'] = "N"
-        if 'niveis' not in config['SOROS']:
-            config['SOROS']['niveis'] = "1"
-        
-        # Salvar configurações atualizadas
-        config.write()
-        
-        return config
-    except Exception as e:
-        st.error(f"Erro ao carregar configurações: {str(e)}")
-        # Criar configuração padrão em caso de erro
-        config = ConfigObj()
-        config['LOGIN'] = {'email': "", 'senha': ""}
-        config['AJUSTES'] = {
-            'tipo': "automatico", 
-            'valor_entrada': "2.0", 
-            'stop_win': "20.0", 
-            'stop_loss': "10.0",
-            'estrategia': "MHI",
-            'ativo': "",
-            'analise_medias': "N",
-            'velas_medias': "20"
-        }
-        config['MARTINGALE'] = {'usar': "N", 'niveis': "1", 'fator': "2.0"}
-        config['SOROS'] = {'usar': "N", 'niveis': "1"}
-        
-        try:
-            config.filename = 'config.txt'
-            config.write()
-        except:
-            pass
-        
-        return config
-
-# -----------------------------------------------------------------------------
-# Função para tentar reconectar à API com várias tentativas
-def reconectar_api(api, max_tentativas=3, intervalo=5):
-    """Tenta reconectar à API com várias tentativas"""
-    for tentativa in range(1, max_tentativas + 1):
-        try:
-            log_message(f"Tentativa de reconexão {tentativa}/{max_tentativas}...")
-            check, reason = api.connect()
-            if check:
-                log_message("Reconexão bem-sucedida!")
-                return True
-            else:
-                log_message(f"Falha na reconexão: {reason}")
-                time.sleep(intervalo)
-        except Exception as e:
-            log_message(f"Erro durante a reconexão: {str(e)}")
-            time.sleep(intervalo)
-    
-    log_message("Todas as tentativas de reconexão falharam")
-    return False
-
-# Função para verificar se o ativo está disponível com tratamento de erros
-def verificar_ativo_disponivel(api, ativo, tipo="binary"):
-    """Verifica se o ativo está disponível com tratamento de erros"""
-    max_tentativas = 3
-    
-    for tentativa in range(1, max_tentativas + 1):
-        try:
-            ativo_aberto = api.get_all_open_time()
-            
-            # Verificar se o ativo existe no dicionário
-            if tipo not in ativo_aberto:
-                log_message(f"Tipo de operação '{tipo}' não disponível")
-                return False
-                
-            if ativo not in ativo_aberto[tipo]:
-                log_message(f"Ativo '{ativo}' não encontrado para o tipo '{tipo}'")
-                return False
-                
-            # Verificar se o ativo está aberto
-            if not ativo_aberto[tipo][ativo]['open']:
-                log_message(f"Ativo '{ativo}' está fechado no momento")
-                return False
-                
-            return True
-            
-        except Exception as e:
-            log_message(f"Erro ao verificar disponibilidade do ativo (tentativa {tentativa}/{max_tentativas}): {str(e)}")
-            
-            if tentativa < max_tentativas:
-                time.sleep(2)
-            else:
-                log_message("Falha ao verificar disponibilidade do ativo após várias tentativas")
-                return False
-    
-    return False
-
-# Função para parada segura do bot
-def parar_bot_seguro():
-    """Para o bot de forma segura, garantindo que recursos sejam liberados"""
-    global BOT_RUNNING
-    
-    log_message("Iniciando parada segura do bot...")
-    
-    # Sinalizar que o bot deve parar
-    BOT_RUNNING = False
-    
-    # Adicionar aqui qualquer limpeza adicional necessária
-    log_message("Bot parado com segurança")
-
-# -----------------------------------------------------------------------------
-# Sidebar – Configuração e Login
-st.sidebar.markdown("<h2 style='text-align: center; background: linear-gradient(90deg, #0078ff, #00bfff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 600; margin-bottom: 20px;'> Configuração e Login</h2>", unsafe_allow_html=True)
-
-# Adiciona logo na sidebar
-st.sidebar.markdown("""
-<div style="text-align: center; margin-bottom: 20px;">
-    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/IQ_Option_logo.svg/1200px-IQ_Option_logo.svg.png" width="150">
-</div>
-""", unsafe_allow_html=True)
-
-with st.sidebar.expander("Credenciais IQ Option", expanded=True):
-    email = st.text_input("Email", value="", key="email", placeholder="Seu email na IQ Option")
-    senha = st.text_input("Senha", type="password", key="senha", placeholder="Sua senha")
-    conta = st.selectbox("Conta", ["Demo", "Real"], key="conta")
-
-with st.sidebar.expander("Configurações de Operação", expanded=True):
-    tipo = st.selectbox("Tipo de Operação", ["automatico", "digital", "binary"], key="tipo", 
-                        help="Escolha o tipo de operação a ser realizada")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        valor_entrada = st.number_input("Valor Entrada", value=2.0, step=0.5, format="%.2f", key="valor_entrada")
-        stop_loss = st.number_input("Stop Loss", value=10.0, step=1.0, format="%.2f", key="stop_loss")
-    with col2:
-        stop_win = st.number_input("Stop Win", value=20.0, step=1.0, format="%.2f", key="stop_win")
-        analise_medias = st.selectbox("Análise Médias", ["N", "S"], key="analise_medias", 
-                                    help="Usar análise de médias móveis para confirmar tendência")
-
-    usar_martingale = st.checkbox("Usar Martingale", value=False, key="usar_martingale")
-    if usar_martingale:
-        col1, col2 = st.columns(2)
-        with col1:
-            niveis_martingale = st.number_input("Níveis", value=1, step=1, key="niveis_martingale", min_value=1)
-        with col2:
-            fator_martingale = st.number_input("Fator", value=2.0, key="fator_martingale", min_value=1.0, format="%.1f")
+    if message_type == "success":
+        formatted_message = f"<span style='color: #28a745;'>[{timestamp}] {message}</span>"
+    elif message_type == "error":
+        formatted_message = f"<span style='color: #dc3545;'>[{timestamp}] {message}</span>"
+    elif message_type == "warning":
+        formatted_message = f"<span style='color: #ffc107;'>[{timestamp}] {message}</span>"
+    elif message_type == "operation":
+        formatted_message = f"<span style='color: #9370DB;'>[{timestamp}] {message}</span>"
     else:
-        niveis_martingale = 0
-        fator_martingale = 0.0
-
-with st.sidebar.expander("Configurações de Soros", expanded=False):
-    usar_soros = st.checkbox("Usar Soros", value=False, key="usar_soros")
-    if usar_soros:
-        niveis_soros = st.number_input("Níveis de Soros", value=1, step=1, key="niveis_soros", min_value=1)
-    else:
-        niveis_soros = 0
-
-with st.sidebar.expander("Configurações de Análise", expanded=False):
-    velas_medias = st.number_input("Número de Velas para Médias", value=20, step=1, key="velas_medias", min_value=3)
-
-# Adiciona informações na parte inferior da sidebar
-st.sidebar.markdown("""
-<div style="position: fixed; bottom: 20px; left: 20px; right: 20px; text-align: center; font-size: 0.8rem; color: #888;">
-    <hr style="margin: 10px 0; border-color: #3D3D60;">
-    <p>Bot Trader IQ Option v1.0</p>
-    <p> 2025 - Todos os direitos reservados</p>
-</div>
-""", unsafe_allow_html=True)
-
-if st.sidebar.button("Salvar Configurações", use_container_width=True, key="salvar_config"):
-    # Obtém a estratégia e ativo selecionados (se disponíveis)
-    estrategia = st.session_state.get("estrategia_choice", "MHI")
-    ativo = st.session_state.get("ativo_input", "")
+        formatted_message = f"<span style='color: #E0E0E0;'>[{timestamp}] {message}</span>"
     
-    # Sanitiza os valores para evitar problemas de codificação
-    estrategia = estrategia.replace('ê', 'e').replace('ã', 'a')
-    
+    st.session_state.log_messages.append(formatted_message)
+    logging.info(message)
+
+# Função para carregar configurações com tratamento de erros
+def load_config():
     try:
-        # Lê a configuração existente ou cria uma nova
-        try:
+        if os.path.exists('config.txt'):
             config = ConfigObj('config.txt', encoding='utf-8')
-        except:
+            log_message("Configurações carregadas com sucesso")
+            return config
+        else:
+            log_message("Arquivo de configuração não encontrado. Criando novo...", "warning")
             config = ConfigObj()
+            config.filename = 'config.txt'
             
+            # Estrutura padrão de configuração
+            config['LOGIN'] = {'email': '', 'senha': ''}
+            config['AJUSTES'] = {
+                'tipo': 'binary', 
+                'valor_entrada': '2', 
+                'stop_win': '15', 
+                'stop_loss': '15',
+                'analise_medias': 'N',
+                'velas_medias': '20'
+            }
+            config['MARTINGALE'] = {'usar': 'N', 'niveis': '2', 'fator': '2.0'}
+            config['SOROS'] = {'usar': 'N', 'niveis': '2'}
+            
+            config.write()
+            return config
+    except Exception as e:
+        log_message(f"Erro ao carregar configurações: {str(e)}", "error")
+        return None
+
+# Função para salvar configurações
+def save_config(config_data):
+    try:
+        config = ConfigObj()
+        
         # Atualiza as configurações
-        config["LOGIN"] = {"email": email, "senha": senha}
-        config["AJUSTES"] = {"tipo": tipo,
-                            "valor_entrada": str(valor_entrada),
-                            "stop_win": str(stop_win),
-                            "stop_loss": str(stop_loss),
-                            "analise_medias": analise_medias,
-                            "velas_medias": str(velas_medias),
-                            "estrategia": estrategia,
-                            "ativo": ativo}
-        config["MARTINGALE"] = {"usar": "S" if usar_martingale else "N",
-                                "niveis": str(niveis_martingale),
-                                "fator": str(fator_martingale)}
-        config["SOROS"] = {"usar": "S" if usar_soros else "N",
-                        "niveis": str(niveis_soros)}
+        config['LOGIN'] = {
+            'email': config_data['email'],
+            'senha': config_data['senha']
+        }
+        
+        config['AJUSTES'] = {
+            'tipo': config_data['tipo'],
+            'valor_entrada': str(config_data['valor_entrada']),
+            'stop_win': str(config_data['stop_win']),
+            'stop_loss': str(config_data['stop_loss']),
+            'analise_medias': 'S' if config_data['analise_medias'] else 'N',
+            'velas_medias': str(config_data['velas_medias'])
+        }
+        
+        config['MARTINGALE'] = {
+            'usar': 'S' if config_data['usar_martingale'] else 'N',
+            'niveis': str(config_data['niveis_martingale']),
+            'fator': str(config_data['fator_martingale'])
+        }
+        
+        config['SOROS'] = {
+            'usar': 'S' if config_data['usar_soros'] else 'N',
+            'niveis': str(config_data['niveis_soros'])
+        }
         
         # Salva o arquivo
-        config.filename = "config.txt"
+        config.filename = 'config.txt'
         config.write()
         
-        st.sidebar.success("")
-        log_message("Configuração salva em config.txt")
+        log_message("Configurações salvas com sucesso", "success")
+        return True
     except Exception as e:
-        st.sidebar.error(f" Erro ao salvar configuração: {str(e)}")
-        log_message(f"Erro ao salvar configuração: {str(e)}")
-        
-        # Tenta uma abordagem alternativa se a primeira falhar
-        try:
-            with open('config.txt', 'w') as f:
-                f.write("[LOGIN]\n")
-                f.write(f"email = {email}\n")
-                f.write(f"senha = {senha}\n\n")
-                
-                f.write("[AJUSTES]\n")
-                f.write(f"tipo = {tipo}\n")
-                f.write(f"valor_entrada = {valor_entrada}\n")
-                f.write(f"stop_win = {stop_win}\n")
-                f.write(f"stop_loss = {stop_loss}\n")
-                f.write(f"analise_medias = {analise_medias}\n")
-                f.write(f"velas_medias = {velas_medias}\n")
-                f.write(f"estrategia = {estrategia}\n")
-                f.write(f"ativo = {ativo}\n\n")
-                
-                f.write("[MARTINGALE]\n")
-                f.write(f"usar = {'S' if usar_martingale else 'N'}\n")
-                f.write(f"niveis = {niveis_martingale}\n")
-                f.write(f"fator = {fator_martingale}\n\n")
-                
-                f.write("[SOROS]\n")
-                f.write(f"usar = {'S' if usar_soros else 'N'}\n")
-                f.write(f"niveis = {niveis_soros}\n")
-            
-            st.sidebar.success("")
-        except Exception as e2:
-            st.sidebar.error(f" Falha no método alternativo: {str(e2)}")
+        log_message(f"Erro ao salvar configurações: {str(e)}", "error")
+        return False
 
-# -----------------------------------------------------------------------------
-# Seção: Conectar na IQ Option
-st.markdown("<h2 class='sub-header'> 1 - Conectar na IQ Option</h2>", unsafe_allow_html=True)
+# Função para conectar à IQ Option
+def connect_iqoption(email, senha, conta):
+    try:
+        log_message("Iniciando conexão com a IQ Option...")
+        api = IQ_Option(email, senha)
+        check, reason = api.connect()
+        
+        if check:
+            log_message("Conectado com sucesso!", "success")
+            
+            # Seleciona a conta (demo ou real)
+            if conta == "Demo":
+                api.change_balance("PRACTICE")
+                log_message("Conta DEMO selecionada", "info")
+            else:
+                api.change_balance("REAL")
+                log_message("Conta REAL selecionada", "warning")
+            
+            # Obtém informações do perfil
+            perfil = json.loads(json.dumps(api.get_profile_ansyc()))
+            st.session_state.nome = str(perfil['name'])
+            st.session_state.cifrao = str(perfil['currency_char'])
+            st.session_state.saldo = float(api.get_balance())
+            
+            log_message(f"Bem-vindo {st.session_state.nome}! Saldo atual: {st.session_state.cifrao} {st.session_state.saldo}")
+            
+            return api
+        else:
+            if "invalid_credentials" in reason:
+                log_message("Email ou senha incorretos. Verifique suas credenciais.", "error")
+            else:
+                log_message(f"Erro na conexão: {reason}", "error")
+            return None
+    except Exception as e:
+        log_message(f"Exceção ao conectar: {str(e)}", "error")
+        return None
+
+# Função para verificar se o ativo está disponível
+def check_asset_available(api, asset, option_type="binary"):
+    try:
+        if option_type == "digital":
+            asset_list = api.get_digital_underlying()
+        else:  # binary
+            asset_list = api.get_all_open_time()["binary"]
+            
+        if option_type == "digital" and asset in asset_list:
+            return True
+        elif option_type == "binary" and asset in asset_list and asset_list[asset]["open"]:
+            return True
+        else:
+            return False
+    except Exception as e:
+        log_message(f"Erro ao verificar disponibilidade do ativo: {str(e)}", "error")
+        return False
+
+# Função para obter payout
+def get_payout(api, asset, option_type="binary"):
+    try:
+        if option_type == "digital":
+            return api.get_digital_payout(asset)
+        else:
+            return api.get_all_profit()[asset]["binary"] * 100
+    except Exception as e:
+        log_message(f"Erro ao obter payout: {str(e)}", "error")
+        return 0
+
+# Função para executar o catalogador
+def run_catalogador(api):
+    try:
+        log_message("Iniciando catalogação de ativos...")
+        catalog_results, line = catag(api)
+        log_message("Catalogação concluída com sucesso!", "success")
+        return catalog_results, line
+    except Exception as e:
+        log_message(f"Erro na catalogação: {str(e)}", "error")
+        return None, 0
+
+# Função para executar o bot de trading
+def run_trading_bot(api, estrategia, ativo, config_data):
+    try:
+        # Inicializa variáveis
+        st.session_state.bot_running = True
+        st.session_state.stop_bot = False
+        st.session_state.lucro_total = 0
+        st.session_state.wins = 0
+        st.session_state.losses = 0
+        st.session_state.total_ops = 0
+        
+        # Carrega configurações
+        tipo = config_data['tipo']
+        valor_entrada = float(config_data['valor_entrada'])
+        stop_win = float(config_data['stop_win'])
+        stop_loss = float(config_data['stop_loss'])
+        analise_medias = config_data['analise_medias']
+        velas_medias = int(config_data['velas_medias'])
+        
+        # Configurações de Martingale
+        usar_martingale = config_data['usar_martingale']
+        if usar_martingale:
+            martingale = int(config_data['niveis_martingale'])
+            fator_mg = float(config_data['fator_martingale'])
+        else:
+            # Garante que os valores sejam zero quando não estiver usando martingale
+            martingale = 0
+            fator_mg = 0
+        
+        # Configurações de Soros
+        usar_soros = config_data['usar_soros']
+        if usar_soros:
+            soros = True
+            niveis_soros = int(config_data['niveis_soros'])
+            nivel_soros = 0
+        else:
+            # Garante que os valores sejam zero quando não estiver usando soros
+            soros = False
+            niveis_soros = 0
+            nivel_soros = 0
+        
+        valor_soros = 0
+        lucro_op_atual = 0
+        
+        # Função para obter horário atual
+        def horario():
+            return datetime.now().strftime('%H:%M:%S')
+        
+        # Função para calcular médias móveis
+        def medias(velas):
+            soma = 0
+            for vela in velas:
+                soma += vela['close']
+            media = soma / len(velas)
+            
+            if velas[-1]['close'] > media:
+                return 'call'
+            else:
+                return 'put'
+        
+        # Função para verificar stop win/loss
+        def check_stop():
+            if st.session_state.lucro_total >= stop_win:
+                log_message(f"STOP WIN ATINGIDO! Lucro: {st.session_state.cifrao} {st.session_state.lucro_total:.2f}", "success")
+                return False
+            
+            if st.session_state.lucro_total <= -stop_loss:
+                log_message(f"STOP LOSS ATINGIDO! Prejuízo: {st.session_state.cifrao} {st.session_state.lucro_total:.2f}", "error")
+                return False
+            
+            if st.session_state.stop_bot:
+                log_message("Bot parado manualmente pelo usuário", "warning")
+                return False
+            
+            return True
+        
+        # Função para obter payout
+        def payout(par):
+            try:
+                if tipo == 'digital':
+                    api.subscribe_strike_list(par, 1)
+                    time.sleep(0.5)
+                    data = api.get_digital_current_profit(par, 1)
+                    api.unsubscribe_strike_list(par, 1)
+                    return data
+                else:
+                    return api.get_all_profit()[par]['binary'] * 100
+            except Exception as e:
+                log_message(f"Erro ao obter payout: {str(e)}", "error")
+                return 0
+        
+        # Função para realizar compra
+        def compra(ativo, valor_entrada, direcao, exp, tipo_op):
+            try:
+                log_message(f"Iniciando operação: {ativo} / {direcao.upper()} / {valor_entrada} / {exp} min", "operation")
+                
+                # Verifica o tipo de operação
+                if tipo_op == 'automatico':
+                    payout_digital = api.get_digital_payout(ativo)
+                    payout_binario = api.get_all_profit()[ativo]['binary'] * 100
+                    
+                    if payout_digital > payout_binario:
+                        tipo_op = 'digital'
+                    else:
+                        tipo_op = 'binary'
+                
+                # Realiza a compra
+                if tipo_op == 'binary':
+                    status, id = api.buy(valor_entrada, ativo, direcao, exp)
+                else:
+                    status, id = api.buy_digital_spot(ativo, valor_entrada, direcao, exp)
+                
+                if status:
+                    log_message(f"Ordem executada com sucesso! ID: {id}", "success")
+                    
+                    # Aguarda o resultado
+                    if tipo_op == 'binary':
+                        resultado, lucro = api.check_win_v3(id)
+                    else:
+                        while True:
+                            status, lucro = api.check_win_digital_v2(id)
+                            if status:
+                                resultado = "win" if lucro > 0 else "loss"
+                                break
+                            time.sleep(0.5)
+                    
+                    # Atualiza estatísticas
+                    st.session_state.lucro_total += lucro
+                    st.session_state.total_ops += 1
+                    
+                    # Registra operação
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    operation = {
+                        "timestamp": timestamp,
+                        "ativo": ativo,
+                        "direcao": direcao,
+                        "valor": valor_entrada,
+                        "resultado": resultado,
+                        "lucro": lucro,
+                        "lucro_acumulado": st.session_state.lucro_total
+                    }
+                    st.session_state.operations.append(operation)
+                    
+                    # Exibe resultado
+                    if resultado == "win":
+                        st.session_state.wins += 1
+                        log_message(f"WIN! Lucro: {st.session_state.cifrao} {lucro:.2f}", "success")
+                        return True, lucro
+                    else:
+                        st.session_state.losses += 1
+                        log_message(f"LOSS! Prejuízo: {st.session_state.cifrao} {lucro:.2f}", "error")
+                        return False, lucro
+                else:
+                    log_message(f"Erro ao executar ordem: {id}", "error")
+                    return False, 0
+            except Exception as e:
+                log_message(f"Exceção na compra: {str(e)}", "error")
+                return False, 0
+        
+        # Loop principal do bot
+        log_message(f"Iniciando bot com estratégia {estrategia} no ativo {ativo}", "info")
+        log_message(f"Stop Win: {st.session_state.cifrao} {stop_win} | Stop Loss: {st.session_state.cifrao} {stop_loss}", "info")
+        
+        # Executa a estratégia selecionada
+        while check_stop():
+            try:
+                # Estratégia MHI
+                if estrategia == "MHI":
+                    # Verifica se está próximo do horário de entrada (minutos múltiplos de 5)
+                    minuto_atual = int(datetime.now().strftime('%M'))
+                    segundo_atual = int(datetime.now().strftime('%S'))
+                    
+                    # Aguarda o momento ideal para entrar (segundos finais do minuto anterior)
+                    if minuto_atual % 5 == 4 and segundo_atual >= 55:
+                        log_message("Preparando entrada para MHI...", "info")
+                        
+                        # Obtém as velas
+                        timeframe = 60  # 1 minuto
+                        qnt_velas = 3
+                        
+                        if analise_medias:
+                            velas_data = api.get_candles(ativo, timeframe, velas_medias, time.time())
+                            tendencia = medias(velas_data)
+                            log_message(f"Análise de tendência: {tendencia.upper()}", "info")
+                        
+                        velas_data = api.get_candles(ativo, timeframe, qnt_velas, time.time())
+                        
+                        # Analisa as velas
+                        vela1 = 'Verde' if velas_data[0]['open'] < velas_data[0]['close'] else 'Vermelha'
+                        vela2 = 'Verde' if velas_data[1]['open'] < velas_data[1]['close'] else 'Vermelha'
+                        vela3 = 'Verde' if velas_data[2]['open'] < velas_data[2]['close'] else 'Vermelha'
+                        
+                        cores = [vela1, vela2, vela3]
+                        log_message(f"Velas analisadas: {vela1}, {vela2}, {vela3}", "info")
+                        
+                        # Define a direção
+                        direcao = None
+                        if cores.count('Verde') > cores.count('Vermelha') and 'Doji' not in cores:
+                            direcao = 'put'
+                        elif cores.count('Verde') < cores.count('Vermelha') and 'Doji' not in cores:
+                            direcao = 'call'
+                        
+                        # Verifica se a direção está de acordo com a tendência
+                        if analise_medias and direcao and direcao != tendencia:
+                            log_message("Entrada abortada - Contra tendência", "warning")
+                            direcao = None
+                        
+                        # Executa a operação
+                        if direcao:
+                            log_message(f"Sinal identificado: {direcao.upper()}", "info")
+                            
+                            # Executa a entrada
+                            win, lucro = compra(ativo, valor_entrada, direcao, 1, tipo)
+                            
+                            # Gerencia martingale se necessário
+                            if not win and martingale > 0:
+                                valor_mg = valor_entrada
+                                
+                                for i in range(martingale):
+                                    log_message(f"Iniciando martingale nível {i+1}", "warning")
+                                    valor_mg = valor_mg * fator_mg
+                                    
+                                    win_mg, lucro_mg = compra(ativo, valor_mg, direcao, 1, tipo)
+                                    
+                                    if win_mg:
+                                        log_message(f"Martingale {i+1} recuperou operação!", "success")
+                                        break
+                                    
+                                    if i == martingale - 1:
+                                        log_message("Todos os níveis de martingale perdidos", "error")
+                            
+                            # Aguarda para próxima operação
+                            time.sleep(60)
+                        else:
+                            log_message("Sem sinal válido para entrada", "warning")
+                            time.sleep(5)
+                    else:
+                        # Aguarda o momento certo
+                        time.sleep(1)
+                
+                # Estratégia Torres Gêmeas
+                elif estrategia == "Torres Gêmeas":
+                    # Verifica se está próximo do horário de entrada (minutos terminados em 4 ou 9)
+                    minuto_atual = int(datetime.now().strftime('%M'))
+                    segundo_atual = int(datetime.now().strftime('%S'))
+                    
+                    # Aguarda o momento ideal para entrar
+                    if (minuto_atual % 5 == 4) and segundo_atual >= 55:
+                        log_message("Preparando entrada para Torres Gêmeas...", "info")
+                        
+                        # Obtém as velas
+                        timeframe = 60  # 1 minuto
+                        
+                        if analise_medias:
+                            velas_data = api.get_candles(ativo, timeframe, velas_medias, time.time())
+                            tendencia = medias(velas_data)
+                            log_message(f"Análise de tendência: {tendencia.upper()}", "info")
+                        
+                        velas_data = api.get_candles(ativo, timeframe, 5, time.time())
+                        
+                        # Analisa a vela de referência (primeira vela)
+                        vela_ref = 'Verde' if velas_data[0]['open'] < velas_data[0]['close'] else 'Vermelha'
+                        log_message(f"Vela de referência: {vela_ref}", "info")
+                        
+                        # Define a direção (contrária à vela de referência)
+                        direcao = 'put' if vela_ref == 'Verde' else 'call'
+                        
+                        # Verifica se a direção está de acordo com a tendência
+                        if analise_medias and direcao != tendencia:
+                            log_message("Entrada abortada - Contra tendência", "warning")
+                        else:
+                            log_message(f"Sinal identificado: {direcao.upper()}", "info")
+                            
+                            # Executa a entrada
+                            win, lucro = compra(ativo, valor_entrada, direcao, 1, tipo)
+                            
+                            # Gerencia martingale se necessário
+                            if not win and martingale > 0:
+                                valor_mg = valor_entrada
+                                
+                                for i in range(martingale):
+                                    log_message(f"Iniciando martingale nível {i+1}", "warning")
+                                    valor_mg = valor_mg * fator_mg
+                                    
+                                    win_mg, lucro_mg = compra(ativo, valor_mg, direcao, 1, tipo)
+                                    
+                                    if win_mg:
+                                        log_message(f"Martingale {i+1} recuperou operação!", "success")
+                                        break
+                                    
+                                    if i == martingale - 1:
+                                        log_message("Todos os níveis de martingale perdidos", "error")
+                        
+                        # Aguarda para próxima operação
+                        time.sleep(60)
+                    else:
+                        # Aguarda o momento certo
+                        time.sleep(1)
+                
+                # Estratégia MHI M5
+                elif estrategia == "MHI M5":
+                    # Verifica se está próximo do horário de entrada (minutos 0 ou 30)
+                    minuto_atual = int(datetime.now().strftime('%M'))
+                    segundo_atual = int(datetime.now().strftime('%S'))
+                    
+                    # Aguarda o momento ideal para entrar
+                    if (minuto_atual == 29 or minuto_atual == 59) and segundo_atual >= 55:
+                        log_message("Preparando entrada para MHI M5...", "info")
+                        
+                        # Obtém as velas
+                        timeframe = 300  # 5 minutos
+                        qnt_velas = 3
+                        
+                        if analise_medias:
+                            velas_data = api.get_candles(ativo, timeframe, velas_medias, time.time())
+                            tendencia = medias(velas_data)
+                            log_message(f"Análise de tendência: {tendencia.upper()}", "info")
+                        
+                        velas_data = api.get_candles(ativo, timeframe, qnt_velas, time.time())
+                        
+                        # Analisa as velas
+                        vela1 = 'Verde' if velas_data[0]['open'] < velas_data[0]['close'] else 'Vermelha'
+                        vela2 = 'Verde' if velas_data[1]['open'] < velas_data[1]['close'] else 'Vermelha'
+                        vela3 = 'Verde' if velas_data[2]['open'] < velas_data[2]['close'] else 'Vermelha'
+                        
+                        cores = [vela1, vela2, vela3]
+                        log_message(f"Velas analisadas: {vela1}, {vela2}, {vela3}", "info")
+                        
+                        # Define a direção
+                        direcao = None
+                        if cores.count('Verde') > cores.count('Vermelha') and 'Doji' not in cores:
+                            direcao = 'put'
+                        elif cores.count('Verde') < cores.count('Vermelha') and 'Doji' not in cores:
+                            direcao = 'call'
+                        
+                        # Verifica se a direção está de acordo com a tendência
+                        if analise_medias and direcao and direcao != tendencia:
+                            log_message("Entrada abortada - Contra tendência", "warning")
+                            direcao = None
+                        
+                        # Executa a operação
+                        if direcao:
+                            log_message(f"Sinal identificado: {direcao.upper()}", "info")
+                            
+                            # Executa a entrada
+                            win, lucro = compra(ativo, valor_entrada, direcao, 5, tipo)
+                            
+                            # Gerencia martingale se necessário
+                            if not win and martingale > 0:
+                                valor_mg = valor_entrada
+                                
+                                for i in range(martingale):
+                                    log_message(f"Iniciando martingale nível {i+1}", "warning")
+                                    valor_mg = valor_mg * fator_mg
+                                    
+                                    win_mg, lucro_mg = compra(ativo, valor_mg, direcao, 5, tipo)
+                                    
+                                    if win_mg:
+                                        log_message(f"Martingale {i+1} recuperou operação!", "success")
+                                        break
+                                    
+                                    if i == martingale - 1:
+                                        log_message("Todos os níveis de martingale perdidos", "error")
+                            
+                            # Aguarda para próxima operação
+                            time.sleep(300)
+                        else:
+                            log_message("Sem sinal válido para entrada", "warning")
+                            time.sleep(5)
+                    else:
+                        # Aguarda o momento certo
+                        time.sleep(1)
+            
+            except Exception as e:
+                log_message(f"Erro na execução do bot: {str(e)}", "error")
+                time.sleep(5)
+        
+        # Finaliza o bot
+        st.session_state.bot_running = False
+        log_message("Bot finalizado", "info")
+        
+    except Exception as e:
+        st.session_state.bot_running = False
+        log_message(f"Exceção geral no bot: {str(e)}", "error")
+
+# Sidebar - Configurações e Login
+with st.sidebar:
+    st.markdown("<h3 class='sub-header'>Configurações</h3>", unsafe_allow_html=True)
+    
+    # Carrega configurações existentes
+    config = load_config()
+    
+    # Seção de Login
+    with st.expander("Credenciais IQ Option", expanded=True):
+        email = st.text_input(
+            "Email", 
+            value=config['LOGIN']['email'] if config and 'LOGIN' in config else "", 
+            placeholder="Seu email na IQ Option"
+        )
+        senha = st.text_input(
+            "Senha", 
+            value=config['LOGIN']['senha'] if config and 'LOGIN' in config else "", 
+            type="password", 
+            placeholder="Sua senha"
+        )
+        conta = st.selectbox(
+            "Tipo de Conta", 
+            ["Demo", "Real"], 
+            index=0
+        )
+    
+    # Seção de Configurações de Operação
+    with st.expander("Configurações de Operação", expanded=True):
+        tipo = st.selectbox(
+            "Tipo de Operação", 
+            ["binary", "digital", "automatico"], 
+            index=0 if not config or 'AJUSTES' not in config else 
+                  ["binary", "digital", "automatico"].index(config['AJUSTES']['tipo'])
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            # Validação do valor de entrada
+            valor_entrada_config = 2.0  # Valor padrão
+            if config and 'AJUSTES' in config and 'valor_entrada' in config['AJUSTES']:
+                try:
+                    valor_entrada_config = max(2.0, float(config['AJUSTES']['valor_entrada']))
+                except (ValueError, TypeError):
+                    valor_entrada_config = 2.0  # Em caso de erro, usa o valor padrão
+                    
+            valor_entrada = st.number_input(
+                "Valor Entrada", 
+                min_value=2.0, 
+                value=valor_entrada_config,
+                step=1.0
+            )
+        with col2:
+            # Validação do número de velas para médias
+            velas_medias_config = 20  # Valor padrão
+            if config and 'AJUSTES' in config and 'velas_medias' in config['AJUSTES']:
+                try:
+                    velas_medias_config = max(3, int(config['AJUSTES']['velas_medias']))
+                except (ValueError, TypeError):
+                    velas_medias_config = 20  # Em caso de erro, usa o valor padrão
+                    
+            velas_medias = st.number_input(
+                "Velas p/ Médias", 
+                min_value=3, 
+                value=velas_medias_config,
+                step=1
+            )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            # Validação do stop win
+            stop_win_config = 15.0  # Valor padrão
+            if config and 'AJUSTES' in config and 'stop_win' in config['AJUSTES']:
+                try:
+                    stop_win_config = max(1.0, float(config['AJUSTES']['stop_win']))
+                except (ValueError, TypeError):
+                    stop_win_config = 15.0  # Em caso de erro, usa o valor padrão
+                    
+            stop_win = st.number_input(
+                "Stop Win", 
+                min_value=1.0, 
+                value=stop_win_config,
+                step=1.0
+            )
+        with col2:
+            # Validação do stop loss
+            stop_loss_config = 15.0  # Valor padrão
+            if config and 'AJUSTES' in config and 'stop_loss' in config['AJUSTES']:
+                try:
+                    stop_loss_config = max(1.0, float(config['AJUSTES']['stop_loss']))
+                except (ValueError, TypeError):
+                    stop_loss_config = 15.0  # Em caso de erro, usa o valor padrão
+                    
+            stop_loss = st.number_input(
+                "Stop Loss", 
+                min_value=1.0, 
+                value=stop_loss_config,
+                step=1.0
+            )
+        
+        analise_medias = st.checkbox(
+            "Usar Análise de Médias", 
+            value=True if config and 'AJUSTES' in config and config['AJUSTES']['analise_medias'] == 'S' else False
+        )
+    
+    # Seção de Martingale
+    with st.expander("Configurações de Martingale", expanded=False):
+        # Verifica se os valores na configuração são válidos
+        mg_nivel_config = 2  # Valor padrão
+        mg_fator_config = 2.0  # Valor padrão
+        
+        if config and 'MARTINGALE' in config:
+            if 'niveis' in config['MARTINGALE']:
+                try:
+                    mg_nivel_config = max(1, int(config['MARTINGALE']['niveis']))
+                except (ValueError, TypeError):
+                    mg_nivel_config = 2  # Em caso de erro, usa o valor padrão
+                    
+            if 'fator' in config['MARTINGALE']:
+                try:
+                    mg_fator_config = max(1.0, float(config['MARTINGALE']['fator']))
+                except (ValueError, TypeError):
+                    mg_fator_config = 2.0  # Em caso de erro, usa o valor padrão
+        
+        usar_martingale = st.checkbox(
+            "Usar Martingale", 
+            value=True if config and 'MARTINGALE' in config and config['MARTINGALE']['usar'] == 'S' else False
+        )
+        
+        if usar_martingale:
+            col1, col2 = st.columns(2)
+            with col1:
+                niveis_martingale = st.number_input(
+                    "Níveis", 
+                    min_value=1, 
+                    max_value=5, 
+                    value=mg_nivel_config,
+                    step=1
+                )
+            with col2:
+                fator_martingale = st.number_input(
+                    "Fator", 
+                    min_value=1.0, 
+                    max_value=5.0, 
+                    value=mg_fator_config,
+                    step=0.1
+                )
+        else:
+            niveis_martingale = 1  # Valor padrão quando não está usando Martingale
+            fator_martingale = 1.0  # Valor padrão quando não está usando Martingale
+    
+    # Seção de Soros
+    with st.expander("Configurações de Soros", expanded=False):
+        # Verifica se o valor de 'niveis' na configuração é válido (>= 1)
+        soros_nivel_config = 2  # Valor padrão
+        if config and 'SOROS' in config and 'niveis' in config['SOROS']:
+            try:
+                soros_nivel_config = max(1, int(config['SOROS']['niveis']))
+            except (ValueError, TypeError):
+                soros_nivel_config = 2  # Em caso de erro, usa o valor padrão
+        
+        usar_soros = st.checkbox(
+            "Usar Soros", 
+            value=True if config and 'SOROS' in config and config['SOROS']['usar'] == 'S' else False
+        )
+        
+        if usar_soros:
+            niveis_soros = st.number_input(
+                "Níveis de Soros", 
+                min_value=1, 
+                max_value=5, 
+                value=soros_nivel_config,
+                step=1
+            )
+        else:
+            niveis_soros = 1  # Valor padrão quando não está usando Soros
+    
+    # Botão para salvar configurações
+    if st.button("Salvar Configurações", use_container_width=True):
+        config_data = {
+            'email': email,
+            'senha': senha,
+            'tipo': tipo,
+            'valor_entrada': valor_entrada,
+            'stop_win': stop_win,
+            'stop_loss': stop_loss,
+            'analise_medias': analise_medias,
+            'velas_medias': velas_medias,
+            'usar_martingale': usar_martingale,
+            'niveis_martingale': niveis_martingale,
+            'fator_martingale': fator_martingale,
+            'usar_soros': usar_soros,
+            'niveis_soros': niveis_soros
+        }
+        
+        if save_config(config_data):
+            st.success("Configurações salvas com sucesso!")
+        else:
+            st.error("Erro ao salvar configurações!")
+
+# Seção 1: Conectar na IQ Option
+st.markdown("<h2 class='sub-header'>1. Conectar na IQ Option</h2>", unsafe_allow_html=True)
 
 with st.container():
     st.markdown("""
     <div class="card">
-        <div style="display: flex; align-items: center; margin-bottom: 15px;">
-            <div style="background: linear-gradient(135deg, #0078ff, #00bfff); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px;">
-                <span style="color: white; font-size: 20px;">🔑</span>
-            </div>
-            <div>
-                <h3 style="margin: 0; color: #E0E0E0;">Conexão com a Plataforma</h3>
-                <p style="margin: 0; color: #AAAAAA; font-size: 0.9rem;">Clique no botão abaixo para se conectar à sua conta IQ Option usando as credenciais fornecidas.</p>
-            </div>
-        </div>
+        <p>Conecte-se à sua conta IQ Option para iniciar as operações. Certifique-se de que suas credenciais estejam corretas.</p>
     </div>
     """, unsafe_allow_html=True)
     
-    if st.button("Conectar à IQ Option", use_container_width=True, key="conectar"):
-        try:
+    if st.button("Conectar à IQ Option", use_container_width=True, key="btn_connect"):
+        if not email or not senha:
+            st.error("Por favor, preencha seu email e senha nas configurações!")
+            log_message("Tentativa de conexão sem credenciais", "error")
+        else:
             with st.spinner("Conectando à IQ Option..."):
-                st.session_state.API = IQ_Option(email, senha)
-                check, reason = st.session_state.API.connect()
-                if check:
-                    st.success("")
-                    log_message("Conectado com sucesso.")
-                    if conta == "Demo":
-                        st.session_state.API.change_balance("PRACTICE")
-                        log_message("Conta demo selecionada.")
-                    else:
-                        st.session_state.API.change_balance("REAL")
-                        log_message("Conta real selecionada.")
-                    perfil = json.loads(json.dumps(st.session_state.API.get_profile_ansyc()))
-                    st.session_state.cifrao = str(perfil['currency_char'])
-                    st.info(f"Saldo atual: {st.session_state.cifrao} {st.session_state.API.get_balance()}")
-                    log_message(f"Saldo atual: {st.session_state.cifrao} {st.session_state.API.get_balance()}")
+                api = connect_iqoption(email, senha, conta)
+                
+                if api:
+                    st.session_state.API = api
+                    st.session_state.connected = True
+                    st.success(f"Conectado com sucesso! Bem-vindo, {st.session_state.nome}!")
+                    
+                    # Exibe informações da conta
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Saldo", f"{st.session_state.cifrao} {st.session_state.saldo:.2f}")
+                    with col2:
+                        st.metric("Tipo de Conta", conta)
+                    with col3:
+                        st.metric("Status", "Conectado", delta="Online")
                 else:
-                    st.error(f" Erro ao conectar: {reason}")
-                    log_message(f"Erro ao conectar: {reason}")
-        except Exception as e:
-            st.error(f" Exceção na conexão: {str(e)}")
-            log_message("Exceção na conexão: " + str(e))
+                    st.error("Falha na conexão. Verifique suas credenciais e tente novamente.")
 
-# -----------------------------------------------------------------------------
-# Seção: Catalogador e Seleção de Estratégia
-if "API" in st.session_state:
-    st.markdown("<h2 class='sub-header'> 2 - Executar Catalogador e Selecionar Estratégia</h2>", unsafe_allow_html=True)
+# Seção 2: Catalogar Ativos
+if st.session_state.connected:
+    st.markdown("<h2 class='sub-header'>2. Catalogar Ativos</h2>", unsafe_allow_html=True)
     
     with st.container():
         st.markdown("""
         <div class="card">
-            <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                <div style="background: linear-gradient(135deg, #00cc66, #00ff99); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px;">
-                    <span style="color: white; font-size: 20px;">📈</span>
-                </div>
-                <div>
-                    <h3 style="margin: 0; color: #E0E0E0;">Análise de Ativos</h3>
-                    <p style="margin: 0; color: #AAAAAA; font-size: 0.9rem;">Execute o catalogador para analisar os ativos disponíveis e selecione a estratégia desejada para operar.</p>
-                </div>
-            </div>
+            <p>Execute o catalogador para identificar os melhores ativos e estratégias com base no histórico recente.</p>
         </div>
         """, unsafe_allow_html=True)
         
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            if st.button("Executar Catalogador", use_container_width=True, key="executar_catalogador"):
-                try:
-                    with st.spinner("Executando catalogador..."):
-                        lista_catalog, linha = catag(st.session_state.API)
-                        if lista_catalog:
-                            st.session_state.lista_catalog = lista_catalog
-                            st.session_state.linha_catalog = linha
-                            log_message("Catalogador executado com sucesso.")
-                            st.success("")
-                        else:
-                            st.error("")
-                            log_message("Erro ao executar catalogador.")
-                except Exception as e:
-                    st.error(f" Exceção no catalogador: {str(e)}")
-                    log_message("Exceção no catalogador: " + str(e))
-        
-        with col2:
-            estrategia_choice = st.selectbox(
-                "Selecione a Estratégia",
-                ["MHI", "Torres Gêmeas", "MHI M5"],
-                key="estrategia_choice",
-                help="Escolha a estratégia de operação"
-            )
-        
-        # Exibição dos resultados do catalogador
-        if "lista_catalog" in st.session_state:
-            with st.expander("", expanded=True):
-                # Define os cabeçalhos fixos para a tabela
-                headers = ["", "", "", "", ""]
-                st.markdown(f"```\n{tabulate(st.session_state.lista_catalog, headers=headers, tablefmt='pretty')}\n```")
+        if st.button("Executar Catalogador", use_container_width=True, key="btn_catalog"):
+            with st.spinner("Catalogando ativos... Isso pode demorar alguns minutos."):
+                catalog_results, line = run_catalogador(st.session_state.API)
                 
-                # Extrair ativos da lista de catalogação
-                ativos = [item[1] for item in st.session_state.lista_catalog]  # Índice 1 contém o nome do par
-                default_ativo = ativos[0] if ativos else ""
-                
-                st.markdown("<p style='margin-top:15px;'><b></b></p>", unsafe_allow_html=True)
-                st.markdown("<p style='margin-top: 10px; font-weight: bold;'>Selecione ou digite o ativo:</p>", unsafe_allow_html=True)
-                ativo_input = st.selectbox("Selecione o Ativo", ativos, index=0, key="ativo_select") if ativos else st.text_input("Digite o Ativo", value=default_ativo, key="ativo_input")
-                
-                # Botão para salvar a estratégia e ativo selecionados
-                if st.button("Salvar Estratégia e Ativo", use_container_width=True, key="salvar_estrategia"):
-                    # Atualiza o arquivo de configuração
-                    try:
-                        # Lê a configuração existente ou cria uma nova
-                        try:
-                            config = ConfigObj('config.txt', encoding='utf-8')
-                        except:
-                            config = ConfigObj()
-                            
-                        # Atualiza as configurações
-                        config["AJUSTES"] = {"estrategia": estrategia_choice,
-                            "ativo": ativo_input}
-                        
-                        # Salva o arquivo
-                        config.filename = 'config.txt'
-                        config.write()
-                        
-                        st.success("")
-                        log_message(f"" + estrategia_choice + "" + ativo_input + "")
-                    except Exception as e:
-                        st.error(f" Erro ao salvar configuração: {str(e)}")
-                        log_message(f"Erro ao salvar configuração: {str(e)}")
-                        
-                        # Tenta uma abordagem alternativa se a primeira falhar
-                        try:
-                            with open('config.txt', 'w') as f:
-                                f.write(f"[AJUSTES]\nestrategia = {estrategia_choice}\nativo = {ativo_input}\n")
-                            st.success("")
-                        except Exception as e2:
-                            st.error(f" Falha no método alternativo: {str(e2)}")
-        else:
-            ativo_input = st.text_input("", value="")
-
-# -----------------------------------------------------------------------------
-# Função que roda o bot em thread separada, recebendo a API como parâmetro
-def run_bot(api):
-    global BOT_RUNNING
-    
-    # Obtém as configurações
-    config = carregar_configuracoes_seguras()
-    
-    # Parâmetros
-    valor_entrada = float(config['AJUSTES']['valor_entrada'])
-    stop_win = float(config['AJUSTES']['stop_win'])
-    stop_loss = float(config['AJUSTES']['stop_loss'])
-    tipo = config['AJUSTES']['tipo']
-    estrategia = config['AJUSTES'].get('estrategia', 'MHI')  # Valor padrão caso não exista
-    ativo = config['AJUSTES'].get('ativo', '')  # Valor padrão caso não exista
-    
-    # Martingale
-    usar_martingale = config['MARTINGALE']['usar'] == 'S'
-    niveis_martingale = int(config['MARTINGALE']['niveis'])
-    fator_martingale = float(config['MARTINGALE']['fator'])
-    
-    # Soros
-    usar_soros = config['SOROS']['usar'] == 'S'
-    niveis_soros = int(config['SOROS']['niveis'])
-    
-    # Análise de médias
-    analise_medias = config['AJUSTES'].get('analise_medias', 'N')
-    velas_medias = int(config['AJUSTES'].get('velas_medias', '20'))
-    
-    # Variáveis de controle
-    lucro_atual = 0.0
-    valor_atual = valor_entrada
-    nivel_atual_martingale = 0
-    nivel_atual_soros = 0
-    valor_soros = 0
-    lucro_op_atual = 0
-    
-    # Obter informações do perfil
-    try:
-        perfil = json.loads(json.dumps(api.get_profile_ansyc()))
-        cifrao = str(perfil['currency_char'])
-        nome = str(perfil['name'])
-        safe_session_state_update('cifrao', cifrao)
-        log_message(f"Bem-vindo, {nome}! Saldo atual: {cifrao}{api.get_balance()}")
-    except Exception as e:
-        cifrao = "$"
-        log_message(f"Erro ao obter informações do perfil: {str(e)}")
-    
-    log_message(f"Bot iniciado - Estratégia: {estrategia}, Ativo: {ativo}, Valor: {valor_entrada}")
-    
-    # Função para verificar o horário da corretora
-    def horario():
-        return datetime.fromtimestamp(api.get_server_timestamp())
-    
-    # Função para calcular médias
-    def medias(velas):
-        soma = 0
-        for i in velas:
-            soma += i['close']
-        media = soma / len(velas)
-        
-        if media > velas[-1]['close']:
-            tendencia = 'put'
-        else:
-            tendencia = 'call'
-        
-        return tendencia
-    
-    # Função para verificar o payout
-    def payout(par):
-        profit = api.get_all_profit()
-        all_asset = api.get_all_open_time()
-        
-        try:
-            if all_asset['binary'][par]['open']:
-                if profit[par]['binary'] > 0:
-                    binary = round(profit[par]['binary'], 2) * 100
-            else:
-                binary = 0
-        except:
-            binary = 0
-        
-        try:
-            if all_asset['turbo'][par]['open']:
-                if profit[par]['turbo'] > 0:
-                    turbo = round(profit[par]['turbo'], 2) * 100
-            else:
-                turbo = 0
-        except:
-            turbo = 0
-        
-        try:
-            if all_asset['digital'][par]['open']:
-                digital = api.get_digital_payout(par)
-            else:
-                digital = 0
-        except:
-            digital = 0
-        
-        return binary, turbo, digital
-    
-    # Função para realizar compra
-    def compra(ativo, valor_entrada, direcao, exp, tipo):
-        nonlocal lucro_atual, nivel_atual_soros, valor_soros, lucro_op_atual, valor_atual, nivel_atual_martingale
-        
-        # Lógica de Soros
-        if usar_soros:
-            if nivel_atual_soros == 0:
-                entrada = valor_entrada
-            elif nivel_atual_soros >= 1 and valor_soros > 0 and nivel_atual_soros <= niveis_soros:
-                entrada = valor_entrada + valor_soros
-            elif nivel_atual_soros > niveis_soros:
-                lucro_op_atual = 0
-                valor_soros = 0
-                entrada = valor_entrada
-                nivel_atual_soros = 0
-        else:
-            entrada = valor_entrada
-        
-        # Loop para martingale
-        for i in range(nivel_atual_martingale + 1):
-            # Aplica Martingale antes da nova entrada (exceto na primeira)
-            if i > 0:
-                entrada = round(entrada * fator_martingale, 2)
-                log_message(f" MARTINGALE {i}: Aumentando valor para {entrada:.2f}")
-            
-            # Executar a compra na API
-            try:
-                log_message(f" ENTRADA REALIZADA: {ativo}, Direção: {direcao.upper()}, Valor: {entrada:.2f}, Expiração: {exp} min")
-                
-                if tipo.lower() == 'digital':
-                    check, id = api.buy_digital_spot_v2(ativo, entrada, direcao.lower(), exp)
-                else:
-                    check, id = api.buy(entrada, ativo, direcao.lower(), exp)
-                
-                if check:
-                    log_message(f" Ordem aberta com sucesso{' para gale ' + str(i) if i > 0 else ''}")
+                if catalog_results:
+                    st.session_state.catalog_results = catalog_results
+                    st.session_state.catalog_line = line
                     
-                    # Aguardar resultado
-                    tempo_espera = 0
-                    max_tempo_espera = exp * 60 + 5  # Tempo de expiração em segundos + 5 segundos de margem
+                    # Cria um DataFrame para exibir os resultados
+                    df = pd.DataFrame(
+                        catalog_results, 
+                        columns=["Estratégia", "Ativo", "Win%", "Gale1%", "Gale2%"]
+                    )
                     
-                    while tempo_espera < max_tempo_espera:
-                        time.sleep(1)
-                        tempo_espera += 1
-                        
-                        try:
-                            if tipo.lower() == 'digital':
-                                status, resultado_valor = api.check_win_digital_v2(id)
-                            else:
-                                if hasattr(api, 'check_win_v3'):
-                                    resultado_valor = api.check_win_v3(id)
-                                    status = True
-                                else:
-                                    status, resultado_valor = api.check_win_v2(id)
-                            
-                            if status:
-                                # Registra o timestamp da operação
-                                timestamp = datetime.now().strftime("%H:%M:%S")
-                                resultado_valor = round(resultado_valor, 2)
-                                
-                                try:
-                                    if resultado_valor > 0:
-                                        # WIN
-                                        lucro_atual += resultado_valor
-                                        valor_soros += resultado_valor
-                                        lucro_op_atual += resultado_valor
-                                        
-                                        # Atualiza session_state
-                                        safe_session_state_increment('bot_wins')
-                                        if "bot_lucro_total" not in st.session_state:
-                                            st.session_state.bot_lucro_total = resultado_valor
-                                        else:
-                                            st.session_state.bot_lucro_total += resultado_valor
-                                            
-                                        log_message(f" RESULTADO: WIN +{resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
-                                        
-                                        # Registra a operação no histórico
-                                        safe_add_to_historico({
-                                            'timestamp': timestamp,
-                                            'resultado': 'WIN',
-                                            'valor': entrada,
-                                            'lucro': resultado_valor,
-                                            'lucro_acumulado': lucro_atual,
-                                            'estrategia': estrategia,
-                                            'ativo': ativo,
-                                            'direcao': direcao,
-                                            'martingale': i
-                                        })
-                                        
-                                        # Reset martingale após WIN
-                                        nivel_atual_martingale = 0
-                                        
-                                        # Aplicar Soros se configurado
-                                        if usar_soros:
-                                            if lucro_op_atual > 0:
-                                                nivel_atual_soros += 1
-                                                lucro_op_atual = 0
-                                                log_message(f" SOROS: Próximo nível {nivel_atual_soros} com {valor_soros:.2f}")
-                                            else:
-                                                valor_soros = 0
-                                                nivel_atual_soros = 0
-                                                lucro_op_atual = 0
-                                        
-                                        return True, resultado_valor
-                                        
-                                    elif resultado_valor == 0:
-                                        # EMPATE
-                                        # Atualiza session_state
-                                        safe_session_state_increment('bot_empates')
-                                        log_message(f" RESULTADO: EMPATE{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
-                                        
-                                        # Registra a operação no histórico
-                                        safe_add_to_historico({
-                                            'timestamp': timestamp,
-                                            'resultado': 'EMPATE',
-                                            'valor': entrada,
-                                            'lucro': 0,
-                                            'lucro_acumulado': lucro_atual,
-                                            'estrategia': estrategia,
-                                            'ativo': ativo,
-                                            'direcao': direcao,
-                                            'martingale': i
-                                        })
-                                        
-                                        return True, 0
-                                        
-                                    else:
-                                        # LOSS
-                                        lucro_atual += resultado_valor  # Resultado negativo
-                                        
-                                        # Atualiza session_state
-                                        safe_session_state_increment('bot_losses')
-                                        if "bot_lucro_total" not in st.session_state:
-                                            st.session_state.bot_lucro_total = resultado_valor
-                                        else:
-                                            st.session_state.bot_lucro_total += resultado_valor
-                                            
-                                        log_message(f" RESULTADO: LOSS {resultado_valor:.2f}{' no gale ' + str(i) if i > 0 else ''} | Lucro Total: {lucro_atual:.2f}")
-                                        
-                                        # Registra a operação no histórico
-                                        safe_add_to_historico({
-                                            'timestamp': timestamp,
-                                            'resultado': 'LOSS',
-                                            'valor': entrada,
-                                            'lucro': resultado_valor,
-                                            'lucro_acumulado': lucro_atual,
-                                            'estrategia': estrategia,
-                                            'ativo': ativo,
-                                            'direcao': direcao,
-                                            'martingale': i
-                                        })
-                                        
-                                        # Se tiver mais níveis de martingale, continua para o próximo
-                                        if usar_martingale and i < niveis_martingale:
-                                            break  # Sai do loop de espera para ir para o próximo martingale
-                                        else:
-                                            # Reset martingale se atingiu o nível máximo
-                                            nivel_atual_martingale = 0
-                                            # Reset soros em caso de loss
-                                            valor_soros = 0
-                                            nivel_atual_soros = 0
-                                            lucro_op_atual = 0
-                                            return False, resultado_valor
-                                    
-                                    # Incrementa contador de operações totais
-                                    safe_session_state_increment('bot_total_ops')
-                                    break  # Sai do loop de espera após obter o resultado
-                                    
-                                except Exception as e:
-                                    log_message(f" Erro ao processar resultado: {str(e)}")
-                                    if tempo_espera >= max_tempo_espera - 1:
-                                        break
-                        except Exception as e:
-                            log_message(f" Erro ao verificar resultado: {str(e)}")
-                            if tempo_espera >= max_tempo_espera - 1:
-                                break
+                    # Formata as colunas de percentual
+                    for col in ["Win%", "Gale1%", "Gale2%"]:
+                        df[col] = df[col].apply(lambda x: f"{x:.2f}%")
+                    
+                    # Exibe o DataFrame
+                    st.dataframe(df, use_container_width=True)
+                    
+                    # Destaca o melhor resultado
+                    best_strategy = catalog_results[0][0]
+                    best_asset = catalog_results[0][1]
+                    best_rate = catalog_results[0][line]
+                    
+                    st.success(f"Melhor combinação: Estratégia {best_strategy} com o ativo {best_asset} - Taxa de acerto: {best_rate:.2f}%")
+                    log_message(f"Catalogação concluída. Melhor resultado: {best_strategy}/{best_asset} com {best_rate:.2f}%", "success")
                 else:
-                    log_message(f" Erro na abertura da ordem: {id}")
-                    return False, 0
-            
-            except Exception as e:
-                log_message(f" Erro ao realizar entrada: {str(e)}")
-                return False, 0
-        
-        # Se chegou aqui após todas as tentativas de martingale, é LOSS
-        if usar_martingale and nivel_atual_martingale < niveis_martingale:
-            nivel_atual_martingale += 1
-            log_message(f" MARTINGALE: Próxima entrada será nível {nivel_atual_martingale}")
-        else:
-            nivel_atual_martingale = 0
-        
-        return False, 0
-    
-    # Função para verificar stop win/loss
-    def check_stop():
-        try:
-            if lucro_atual <= float('-'+str(abs(stop_loss))):
-                log_message(f"STOP LOSS BATIDO {cifrao}{lucro_atual:.2f}")
-                parar_bot_seguro()
-                return False
-            
-            if lucro_atual >= float(abs(stop_win)):
-                log_message(f"STOP WIN BATIDO {cifrao}{lucro_atual:.2f}")
-                parar_bot_seguro()
-                return False
-            
-            return True
-        except Exception as e:
-            log_message(f"Erro ao verificar stop: {str(e)}")
-            # Em caso de erro, retorna True para não interromper o bot por falha no check
-            return True
-    
-    # Loop principal do bot
-    while BOT_RUNNING:
-        try:
-            # Verificar stop win/loss
-            if not check_stop():
-                BOT_RUNNING = False
-                break
-            
-            # Verificar se o mercado está aberto
-            try:
-                check_open = api.check_connect()
-                if not check_open:
-                    log_message("Reconectando à IQ Option...")
-                    if not reconectar_api(api):
-                        log_message("Falha na reconexão. Parando o bot.")
-                        BOT_RUNNING = False
-                        break
-                    time.sleep(5)
-                    continue
-            except Exception as e:
-                log_message(f"Erro de conexão - {str(e)}")
-                time.sleep(5)
-                continue
-            
-            # Verificar se o ativo está disponível
-            try:
-                if ativo:
-                    if not verificar_ativo_disponivel(api, ativo, tipo):
-                        log_message(f"Ativo '{ativo}' não está disponível no momento")
-                        time.sleep(30)
-                        continue
-                else:
-                    log_message("Nenhum ativo selecionado")
-                    time.sleep(5)
-                    continue
-            except Exception as e:
-                log_message(f"Erro ao verificar disponibilidade do ativo - {str(e)}")
-                time.sleep(5)
-                continue
-            
-            # Definir tipo de operação automaticamente se necessário
-            if tipo == 'automatico':
-                binary, turbo, digital = payout(ativo)
-                log_message(f"Payouts - Binary: {binary}%, Turbo: {turbo}%, Digital: {digital}%")
-                
-                if digital > turbo:
-                    log_message(f"Suas entradas serão realizadas nas digitais")
-                    tipo = 'digital'
-                elif turbo > digital:
-                    log_message(f"Suas entradas serão realizadas nas binárias")
-                    tipo = 'binary'
-                else:
-                    log_message(f"Par fechado, escolha outro")
-                    time.sleep(30)
-                    continue
-            
-            # Lógica específica para cada estratégia
-            if estrategia == "MHI":
-                # Verificar o horário para entrada
-                now = horario()
-                minutos = float(now.strftime('%M.%S')[1:])
-                
-                # Exibir horário atual
-                log_message(f"Horário atual: {now.strftime('%H:%M:%S')} - Minutos: {minutos}", show_in_ui=False)
-                
-                # Verificar se é momento de entrada (M1)
-                entrar = True if (minutos >= 4.59 and minutos <= 5.00) or minutos >= 9.59 else False
-                
-                if not entrar:
-                    # Aguardar próximo ciclo
-                    time.sleep(0.2)
-                    continue
-                
-                log_message("Iniciando análise da estratégia MHI")
-                
-                # Obter velas para análise
-                timeframe = 60  # M1
-                qnt_velas = 3
-                
-                # Análise de tendência com médias (opcional)
-                tendencia = None
-                if analise_medias == 'S':
-                    velas_tendencia = api.get_candles(ativo, timeframe, int(velas_medias), time.time())
-                    tendencia = medias(velas_tendencia)
-                    log_message(f"Tendência baseada em médias: {tendencia.upper()}")
-                
-                # Obter velas para análise do padrão
-                velas = api.get_candles(ativo, timeframe, qnt_velas, time.time())
-                
-                # Classificar as velas
-                vela1 = 'Verde' if velas[-3]['open'] < velas[-3]['close'] else 'Vermelha' if velas[-3]['open'] > velas[-3]['close'] else 'Doji'
-                vela2 = 'Verde' if velas[-2]['open'] < velas[-2]['close'] else 'Vermelha' if velas[-2]['open'] > velas[-2]['close'] else 'Doji'
-                vela3 = 'Verde' if velas[-1]['open'] < velas[-1]['close'] else 'Vermelha' if velas[-1]['open'] > velas[-1]['close'] else 'Doji'
-                
-                cores = [vela1, vela2, vela3]
-                log_message(f"Velas: {vela1}, {vela2}, {vela3}")
-                
-                # Definir direção com base no padrão MHI
-                direcao = None
-                if cores.count('Verde') > cores.count('Vermelha') and cores.count('Doji') == 0:
-                    direcao = 'put'
-                elif cores.count('Verde') < cores.count('Vermelha') and cores.count('Doji') == 0:
-                    direcao = 'call'
-                
-                # Verificar se a direção está de acordo com a tendência
-                if analise_medias == 'S' and direcao and tendencia and direcao != tendencia:
-                    log_message(f"Entrada abortada - Contra tendência ({direcao.upper()} vs {tendencia.upper()})")
-                    direcao = None
-                
-                # Executar entrada se houver direção definida
-                if direcao:
-                    log_message(f"Padrão MHI identificado - Entrada: {direcao.upper()}")
-                    compra(ativo, valor_atual, direcao, 1, tipo)  # Expiração de 1 minuto
-                else:
-                    if cores.count('Doji') > 0:
-                        log_message("Entrada abortada - Foi encontrado um doji na análise")
-                    else:
-                        log_message("Entrada abortada - Padrão não identificado")
-                
-                # Aguardar próximo ciclo
-                time.sleep(60)  # Aguarda 1 minuto antes da próxima análise
-                
-            elif estrategia == "Torres Gêmeas":
-                # Verificar o horário para entrada
-                now = horario()
-                minutos = float(now.strftime('%M.%S')[1:])
-                
-                # Verificar se é momento de entrada
-                entrar = True if (minutos >= 3.59 and minutos <= 4.00) or minutos >= 9.59 else False
-                
-                if not entrar:
-                    # Aguardar próximo ciclo
-                    time.sleep(0.2)
-                    continue
-                
-                log_message("Iniciando análise da estratégia Torres Gêmeas")
-                
-                # Obter velas para análise
-                timeframe = 60  # M1
-                qnt_velas = 4
-                
-                # Análise de tendência com médias (opcional)
-                tendencia = None
-                if analise_medias == 'S':
-                    velas_tendencia = api.get_candles(ativo, timeframe, int(velas_medias), time.time())
-                    tendencia = medias(velas_tendencia)
-                    log_message(f"Tendência baseada em médias: {tendencia.upper()}")
-                
-                # Obter velas para análise do padrão
-                velas = api.get_candles(ativo, timeframe, qnt_velas, time.time())
-                
-                # Classificar a vela de referência (4ª vela)
-                vela4 = 'Verde' if velas[-4]['open'] < velas[-4]['close'] else 'Vermelha' if velas[-4]['open'] > velas[-4]['close'] else 'Doji'
-                
-                log_message(f"Vela de referência: {vela4}")
-                
-                # Definir direção com base no padrão Torres Gêmeas
-                direcao = None
-                if vela4 == 'Verde' and vela4 != 'Doji':
-                    direcao = 'call'
-                elif vela4 == 'Vermelha' and vela4 != 'Doji':
-                    direcao = 'put'
-                
-                # Verificar se a direção está de acordo com a tendência
-                if analise_medias == 'S' and direcao and tendencia and direcao != tendencia:
-                    log_message(f"Entrada abortada - Contra tendência ({direcao.upper()} vs {tendencia.upper()})")
-                    direcao = None
-                
-                # Executar entrada se houver direção definida
-                if direcao:
-                    log_message(f"Padrão Torres Gêmeas identificado - Entrada: {direcao.upper()}")
-                    compra(ativo, valor_atual, direcao, 1, tipo)  # Expiração de 1 minuto
-                else:
-                    if vela4 == 'Doji':
-                        log_message("Entrada abortada - Foi encontrado um doji na análise")
-                    else:
-                        log_message("Entrada abortada - Padrão não identificado")
-                
-                # Aguardar próximo ciclo
-                time.sleep(60)  # Aguarda 1 minuto antes da próxima análise
-                
-            elif estrategia == "MHI M5":
-                # Verificar o horário para entrada
-                now = horario()
-                minutos = float(now.strftime('%M.%S'))
-                
-                # Verificar se é momento de entrada (M5)
-                entrar = True if (minutos >= 29.59 and minutos <= 30.00) or minutos == 59.59 else False
-                
-                if not entrar:
-                    # Aguardar próximo ciclo
-                    time.sleep(0.2)
-                    continue
-                
-                log_message("Iniciando análise da estratégia MHI M5")
-                
-                # Obter velas para análise
-                timeframe = 300  # M5
-                qnt_velas = 3
-                
-                # Análise de tendência com médias (opcional)
-                tendencia = None
-                if analise_medias == 'S':
-                    velas_tendencia = api.get_candles(ativo, timeframe, int(velas_medias), time.time())
-                    tendencia = medias(velas_tendencia)
-                    log_message(f"Tendência baseada em médias: {tendencia.upper()}")
-                
-                # Obter velas para análise do padrão
-                velas = api.get_candles(ativo, timeframe, qnt_velas, time.time())
-                
-                # Classificar as velas
-                vela1 = 'Verde' if velas[-3]['open'] < velas[-3]['close'] else 'Vermelha' if velas[-3]['open'] > velas[-3]['close'] else 'Doji'
-                vela2 = 'Verde' if velas[-2]['open'] < velas[-2]['close'] else 'Vermelha' if velas[-2]['open'] > velas[-2]['close'] else 'Doji'
-                vela3 = 'Verde' if velas[-1]['open'] < velas[-1]['close'] else 'Vermelha' if velas[-1]['open'] > velas[-1]['close'] else 'Doji'
-                
-                cores = [vela1, vela2, vela3]
-                log_message(f"Velas: {vela1}, {vela2}, {vela3}")
-                
-                # Definir direção com base no padrão MHI
-                direcao = None
-                if cores.count('Verde') > cores.count('Vermelha') and cores.count('Doji') == 0:
-                    direcao = 'put'
-                elif cores.count('Verde') < cores.count('Vermelha') and cores.count('Doji') == 0:
-                    direcao = 'call'
-                
-                # Verificar se a direção está de acordo com a tendência
-                if analise_medias == 'S' and direcao and tendencia and direcao != tendencia:
-                    log_message(f"Entrada abortada - Contra tendência ({direcao.upper()} vs {tendencia.upper()})")
-                    direcao = None
-                
-                # Executar entrada se houver direção definida
-                if direcao:
-                    log_message(f"Padrão MHI M5 identificado - Entrada: {direcao.upper()}")
-                    compra(ativo, valor_atual, direcao, 5, tipo)  # Expiração de 5 minutos
-                else:
-                    if cores.count('Doji') > 0:
-                        log_message("Entrada abortada - Foi encontrado um doji na análise")
-                    else:
-                        log_message("Entrada abortada - Padrão não identificado")
-                
-                # Aguardar próximo ciclo
-                time.sleep(60)  # Aguarda 1 minuto antes da próxima análise
-                
-            else:
-                log_message(f"Estratégia '{estrategia}' não implementada")
-                time.sleep(30)
-            
-        except Exception as e:
-            log_message(f"Erro na execução do bot: {str(e)}")
-            time.sleep(5)
+                    st.error("Falha na catalogação. Verifique o log para mais detalhes.")
 
-# -----------------------------------------------------------------------------
-# Seção: Iniciar Bot e Dashboard de Resultados
-if "API" in st.session_state:
-    st.markdown("<h2 class='sub-header'> 3 - Iniciar Bot e Acompanhar Resultados</h2>", unsafe_allow_html=True)
+# Seção 3: Escolher Estratégia e Ativo
+if st.session_state.connected:
+    st.markdown("<h2 class='sub-header'>3. Escolher Estratégia e Ativo</h2>", unsafe_allow_html=True)
     
     with st.container():
         st.markdown("""
         <div class="card">
-            <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                <div style="background: linear-gradient(135deg, #ff6b6b, #ff8e8e); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px;">
-                    <span style="color: white; font-size: 20px;">▶️</span>
-                </div>
-                <div>
-                    <h3 style="margin: 0; color: #E0E0E0;">Operação Automatizada</h3>
-                    <p style="margin: 0; color: #AAAAAA; font-size: 0.9rem;">Inicie o bot para começar a operar automaticamente com base nas configurações e estratégia selecionadas.</p>
-                </div>
-            </div>
+            <p>Selecione a estratégia e o ativo para iniciar as operações. Você pode escolher manualmente ou usar os resultados do catalogador.</p>
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("Iniciar Operações Automatizadas", use_container_width=True, key="iniciar_bot"):
-            # Efeito de animação ao iniciar o bot
-            with st.spinner("Iniciando operações..."):
-                st.markdown("""
-                <div style="display: flex; justify-content: center; margin: 20px 0;">
-                    <div style="background: linear-gradient(135deg, #0078ff, #00bfff); width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center;" class="pulse">
-                        <span style="color: white; font-size: 40px;">🤖</span>
-                    </div>
-                </div>
-                <p style="text-align: center; color: #00bfff; font-weight: bold; margin-bottom: 20px;">Bot iniciado com sucesso!</p>
-                """, unsafe_allow_html=True)
-                time.sleep(2)  # Pequena pausa para efeito visual
-            
-            # Verificar configurações antes de iniciar o bot
-            erros = validar_configuracoes()
-            if erros:
-                st.error("Configurações inválidas:")
-                for erro in erros:
-                    st.error(erro)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            estrategia_options = ["MHI", "Torres Gêmeas", "MHI M5"]
+            estrategia = st.selectbox(
+                "Selecione a Estratégia", 
+                estrategia_options,
+                index=0
+            )
+        
+        with col2:
+            # Se tiver resultados do catalogador, oferece como opções
+            if "catalog_results" in st.session_state and st.session_state.catalog_results:
+                asset_options = [item[1] for item in st.session_state.catalog_results]
+                default_asset = asset_options[0] if asset_options else ""
+                
+                ativo = st.selectbox(
+                    "Selecione o Ativo", 
+                    asset_options,
+                    index=0
+                )
             else:
-                BOT_RUNNING = True
-                # Captura a API em uma variável local para uso na thread
-                api_instance = st.session_state.API
+                # Caso contrário, permite entrada manual
+                ativo = st.text_input("Digite o Ativo (ex: EURUSD, EURUSD-OTC)", value="EURUSD-OTC").upper()
+        
+        # Verifica disponibilidade do ativo
+        if ativo and st.button("Verificar Disponibilidade do Ativo", key="check_asset"):
+            with st.spinner(f"Verificando disponibilidade de {ativo}..."):
+                if check_asset_available(st.session_state.API, ativo, tipo):
+                    payout = get_payout(st.session_state.API, ativo, tipo)
+                    st.success(f"Ativo {ativo} está disponível! Payout atual: {payout:.2f}%")
+                    log_message(f"Ativo {ativo} disponível com payout de {payout:.2f}%", "success")
+                else:
+                    st.error(f"Ativo {ativo} não está disponível para operações de tipo {tipo}.")
+                    log_message(f"Ativo {ativo} indisponível para o tipo {tipo}", "error")
 
-                # Configuração para suprimir avisos na thread
-                def run_bot_with_warnings_suppressed(api):
-                    # Solução mais robusta para suprimir avisos
-                    import sys
-                    import os
-                    import logging
-                    import warnings
-                    
-                    # Desativar completamente todos os warnings do Python
-                    warnings.simplefilter("ignore")
-                    os.environ["PYTHONWARNINGS"] = "ignore"
-                    
-                    # Desativar todos os logs do Streamlit
-                    for logger_name in logging.Logger.manager.loggerDict:
-                        if 'streamlit' in logger_name:
-                            logging.getLogger(logger_name).setLevel(logging.CRITICAL)
-                            logging.getLogger(logger_name).propagate = False
-                            logging.getLogger(logger_name).disabled = True
-                    
-                    # Redirecionar stderr para um arquivo nulo
-                    class NullWriter:
-                        def write(self, text):
-                            pass
-                        def flush(self):
-                            pass
-                    
-                    # Salvar stderr original
-                    original_stderr = sys.stderr
-                    
-                    try:
-                        # Redirecionar stderr para evitar mensagens de aviso
-                        sys.stderr = NullWriter()
-                        
-                        # Chamar a função real do bot
-                        run_bot(api)
-                    finally:
-                        # Restaurar stderr original
-                        sys.stderr = original_stderr
-
-                # Inicia a thread do bot com supressão de avisos
-                bot_thread = threading.Thread(target=run_bot_with_warnings_suppressed, args=(api_instance,), daemon=True)
-                bot_thread.start()
-
-    st.markdown("<h3 class='sub-header'> Dashboard de Resultados</h3>", unsafe_allow_html=True)
+# Seção 4: Iniciar Bot e Dashboard
+if st.session_state.connected:
+    st.markdown("<h2 class='sub-header'>4. Iniciar Bot e Dashboard</h2>", unsafe_allow_html=True)
     
     with st.container():
         st.markdown("""
-        <div class="dashboard-container">
-            <div style="display: flex; align-items: center; margin-bottom: 15px;">
-                <div style="background: linear-gradient(135deg, #9370DB, #8A2BE2); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px;">
-                    <span style="color: white; font-size: 20px;">📊</span>
-                </div>
-                <div>
-                    <h3 style="margin: 0; color: #E0E0E0;">Acompanhamento em Tempo Real</h3>
-                    <p style="margin: 0; color: #AAAAAA; font-size: 0.9rem;">Monitore o desempenho das operações e resultados do bot em tempo real.</p>
-                </div>
-            </div>
+        <div class="card">
+            <p>Inicie o bot para começar as operações automatizadas. O dashboard mostrará os resultados em tempo real.</p>
         </div>
         """, unsafe_allow_html=True)
         
-        # Layout do dashboard - Métricas principais
-        col1, col2, col3 = st.columns(3)
+        # Botões para iniciar e parar o bot
+        col1, col2 = st.columns(2)
+        
         with col1:
-            lucro_total_container = st.empty()
-        with col2:
-            operacoes_container = st.empty()
-        with col3:
-            taxa_acerto_container = st.empty()
-        
-        # Métricas adicionais
-        col4, col5 = st.columns(2)
-        with col4:
-            stop_win_container = st.empty()
-        with col5:
-            stop_loss_container = st.empty()
-        
-        # Gráficos e estatísticas
-        st.markdown("<p style='margin-top: 20px; font-weight: bold;'>Estatísticas Detalhadas:</p>", unsafe_allow_html=True)
-        stats_container = st.empty()
-        
-        # Container para o log
-        st.markdown("<p style='margin-top: 20px; font-weight: bold;'>Log de Operações:</p>", unsafe_allow_html=True)
-        log_container = st.empty()
-        
-        # Loop de atualização do dashboard
-        while BOT_RUNNING:
-            # Atualiza métricas
-            lucro_total = st.session_state.bot_lucro_total
-            
-            taxa_acerto = 0
-            if st.session_state.bot_total_ops > 0:
-                taxa_acerto = (st.session_state.bot_wins / st.session_state.bot_total_ops) * 100
-                
-            # Atualiza os containers com as métricas
-            lucro_total_container.metric(
-                label="", 
-                value=f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {lucro_total:.2f}",
-                delta=None
-            )
-            
-            operacoes_container.metric(
-                label="", 
-                value=f"{st.session_state.bot_total_ops}",
-                delta=f"" + str(st.session_state.bot_wins) + "" + str(st.session_state.bot_losses) + "" + str(st.session_state.bot_empates) + ""
-            )
-            
-            taxa_acerto_container.metric(
-                label="", 
-                value=f"{taxa_acerto:.1f}%",
-                delta=None
-            )
-            
-            stop_win_container.metric(
-                label="", 
-                value=f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {stop_win}",
-                delta=f"{(lucro_total/stop_win)*100:.1f}%" if stop_win > 0 else None
-            )
-            
-            stop_loss_container.metric(
-                label="", 
-                value=f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {stop_loss}",
-                delta=f"{(lucro_total/stop_loss)*100:.1f}%" if stop_loss > 0 else None
-            )
-            
-            # Atualiza estatísticas detalhadas
-            if st.session_state.bot_total_ops > 0:
-                # Cria dados para o gráfico de pizza
-                stats_cols = stats_container.columns([1, 1])
-                
-                with stats_cols[0]:
-                    # Estatísticas em formato de tabela
-                    stats_data = [
-                        ["Total de Operações", st.session_state.bot_total_ops],
-                        ["Vitórias", st.session_state.bot_wins],
-                        ["Derrotas", st.session_state.bot_losses],
-                        ["Empates", st.session_state.bot_empates],
-                        ["Taxa de Acerto", f"{taxa_acerto:.1f}%"],
-                        ["Lucro Médio por Operação", f"{lucro_total/st.session_state.bot_total_ops:.2f}"]
-                    ]
-                    
-                    st.markdown(f"""
-                    <div class="stats-card">
-                        <h4>Resumo de Operações</h4>
-                        <table class="stats-table">
-                            {"".join([f"<tr><td>{row[0]}</td><td>{row[1]}</td></tr>" for row in stats_data])}
-                        </table>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Gráfico de pizza para resultados
-                    if st.session_state.bot_total_ops > 0:
-                        labels = ['', '', '']
-                        values = [st.session_state.bot_wins, st.session_state.bot_losses, st.session_state.bot_empates]
-                        colors = ['#28a745', '#dc3545', '#ffc107']
-                        
-                        fig = go.Figure(data=[go.Pie(
-                            labels=labels,
-                            values=values,
-                            hole=.4,
-                            marker=dict(colors=colors)
-                        )])
-                        
-                        fig.update_layout(
-                            title_text="Distribuição de Resultados",
-                            showlegend=True,
-                            legend=dict(orientation="h", y=-0.1),
-                            height=300,
-                            margin=dict(l=10, r=10, t=40, b=10),
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            plot_bgcolor='rgba(0,0,0,0)',
-                            font=dict(color='#E0E0E0')
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                with stats_cols[1]:
-                    # Informações da estratégia atual
-                    st.markdown(f"""
-                    <div class="stats-card">
-                        <h4>Configuração Atual</h4>
-                        <table class="stats-table">
-                            <tr><td>Estratégia:</td><td>{estrategia_choice}</td></tr>
-                            <tr><td>Ativo:</td><td>{ativo_input}</td></tr>
-                            <tr><td>Valor de Entrada:</td><td>{valor_entrada}</td></tr>
-                            <tr><td>Tipo:</td><td>{tipo}</td></tr>
-                            <tr><td>Martingale:</td><td>{"Sim" if usar_martingale else "Não"}</td></tr>
-                            <tr><td>Soros:</td><td>{"Sim" if usar_soros else "Não"}</td></tr>
-                        </table>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Gráfico de linha para lucro acumulado
-                    if len(st.session_state.bot_historico) > 0:
-                        # Criar DataFrame para o gráfico
-                        df_historico = pd.DataFrame(st.session_state.bot_historico)
-                        
-                        # Gráfico de linha para lucro acumulado
-                        fig = go.Figure()
-                        
-                        fig.add_trace(go.Scatter(
-                            x=list(range(1, len(df_historico) + 1)),
-                            y=df_historico['lucro_acumulado'],
-                            mode='lines+markers',
-                            name='Lucro Acumulado',
-                            line=dict(color='#00bfff', width=3),
-                            marker=dict(
-                                size=8,
-                                color=df_historico['lucro'].apply(lambda x: '#28a745' if x > 0 else '#dc3545' if x < 0 else '#ffc107'),
-                                line=dict(width=2, color='#E0E0E0')
+            if not st.session_state.bot_running:
+                if st.button("Iniciar Bot", use_container_width=True, key="btn_start_bot"):
+                    if not ativo:
+                        st.error("Selecione um ativo antes de iniciar o bot!")
+                    else:
+                        # Verifica se o ativo está disponível
+                        if check_asset_available(st.session_state.API, ativo, tipo):
+                            # Prepara os dados de configuração
+                            config_data = {
+                                'tipo': tipo,
+                                'valor_entrada': valor_entrada,
+                                'stop_win': stop_win,
+                                'stop_loss': stop_loss,
+                                'analise_medias': analise_medias,
+                                'velas_medias': velas_medias,
+                                'usar_martingale': usar_martingale,
+                                'niveis_martingale': niveis_martingale,
+                                'fator_martingale': fator_martingale,
+                                'usar_soros': usar_soros,
+                                'niveis_soros': niveis_soros
+                            }
+                            
+                            # Inicia o bot em uma thread separada
+                            bot_thread = threading.Thread(
+                                target=run_trading_bot,
+                                args=(st.session_state.API, estrategia, ativo, config_data),
+                                daemon=True
                             )
-                        ))
-                        
-                        # Linha de referência em zero
-                        fig.add_shape(
-                            type="line",
-                            x0=0,
-                            y0=0,
-                            x1=len(df_historico) + 1,
-                            y1=0,
-                            line=dict(color="#3D3D60", width=1, dash="dash"),
-                        )
-                        
-                        fig.update_layout(
-                            title="Evolução do Lucro",
-                            xaxis_title="Operação",
-                            yaxis_title="Lucro Acumulado",
-                            height=300,
-                            margin=dict(l=10, r=10, t=40, b=10),
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            plot_bgcolor='rgba(0,0,0,0)',
-                            font=dict(color='#E0E0E0'),
-                            xaxis=dict(gridcolor='#3D3D60'),
-                            yaxis=dict(gridcolor='#3D3D60')
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
+                            bot_thread.start()
+                            
+                            st.success(f"Bot iniciado com estratégia {estrategia} no ativo {ativo}!")
+                        else:
+                            st.error(f"Ativo {ativo} não está disponível para operações!")
+        
+        with col2:
+            if st.session_state.bot_running:
+                if st.button("Parar Bot", use_container_width=True, key="btn_stop_bot"):
+                    st.session_state.stop_bot = True
+                    st.warning("Solicitação para parar o bot enviada. Aguarde a conclusão da operação atual...")
+    
+    # Dashboard de resultados
+    if st.session_state.bot_running or len(st.session_state.operations) > 0:
+        st.markdown("<h3 class='sub-header'>Dashboard de Resultados</h3>", unsafe_allow_html=True)
+        
+        # Métricas principais
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Lucro/Prejuízo", 
+                f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {st.session_state.lucro_total:.2f}",
+                delta=f"{st.session_state.lucro_total:.2f}"
+            )
+        
+        with col2:
+            taxa_acerto = (st.session_state.wins / st.session_state.total_ops * 100) if st.session_state.total_ops > 0 else 0
+            st.metric(
+                "Taxa de Acerto", 
+                f"{taxa_acerto:.2f}%",
+                delta=f"{st.session_state.wins} ganhos / {st.session_state.losses} perdas"
+            )
+        
+        with col3:
+            st.metric(
+                "Stop Win", 
+                f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {stop_win}",
+                delta=f"{(st.session_state.lucro_total/stop_win)*100:.1f}%" if stop_win > 0 else None
+            )
+        
+        with col4:
+            st.metric(
+                "Stop Loss", 
+                f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {stop_loss}",
+                delta=f"{(st.session_state.lucro_total/(-stop_loss))*100:.1f}%" if stop_loss > 0 else None
+            )
+        
+        # Gráfico de resultados
+        if len(st.session_state.operations) > 0:
+            # Cria DataFrame para o gráfico
+            df_ops = pd.DataFrame(st.session_state.operations)
             
-            # Atualiza o log com formatação de cores
-            log_text = ""
-            for log in st.session_state.bot_messages:
-                if "WIN" in log:
-                    log_text += f"<span style='color: #28a745;'>{log}</span><br>"
-                elif "LOSS" in log:
-                    log_text += f"<span style='color: #dc3545;'>{log}</span><br>"
-                elif "EMPATE" in log:
-                    log_text += f"<span style='color: #ffc107;'>{log}</span><br>"
-                elif "STOP" in log:
-                    log_text += f"<span style='color: #17a2b8; font-weight: bold;'>{log}</span><br>"
-                elif "Entrada" in log:
-                    log_text += f"<span style='color: #9370DB;'>{log}</span><br>"
-                else:
-                    log_text += f"<span style='color: #E0E0E0;'>{log}</span><br>"
+            # Gráfico de linha para lucro acumulado
+            fig = go.Figure()
             
-            log_container.markdown(f"""
-            <div class="log-container">
-                {log_text}
-            </div>
-            """, unsafe_allow_html=True)
+            fig.add_trace(go.Scatter(
+                x=list(range(1, len(df_ops) + 1)),
+                y=df_ops['lucro_acumulado'],
+                mode='lines+markers',
+                name='Lucro Acumulado',
+                line=dict(color='#00bfff', width=3),
+                marker=dict(
+                    size=8,
+                    color=df_ops['lucro'].apply(lambda x: '#28a745' if x > 0 else '#dc3545' if x < 0 else '#ffc107'),
+                    line=dict(width=2, color='#E0E0E0')
+                )
+            ))
             
-            time.sleep(1)
+            # Linha de referência em zero
+            fig.add_shape(
+                type="line",
+                x0=0,
+                y0=0,
+                x1=len(df_ops) + 1,
+                y1=0,
+                line=dict(color="#3D3D60", width=1, dash="dash"),
+            )
+            
+            fig.update_layout(
+                title="Evolução do Lucro",
+                xaxis_title="Operação",
+                yaxis_title="Lucro Acumulado",
+                height=300,
+                margin=dict(l=10, r=10, t=40, b=10),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='#E0E0E0'),
+                xaxis=dict(gridcolor='#3D3D60'),
+                yaxis=dict(gridcolor='#3D3D60')
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Tabela de operações
+            st.markdown("<p style='margin-top: 20px; font-weight: bold;'>Histórico de Operações:</p>", unsafe_allow_html=True)
+            
+            # Formata o DataFrame para exibição
+            df_display = df_ops.copy()
+            df_display['resultado'] = df_display['resultado'].apply(
+                lambda x: "✅ WIN" if x == "win" else "❌ LOSS"
+            )
+            df_display['lucro'] = df_display.apply(
+                lambda x: f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {x['lucro']:.2f}", axis=1
+            )
+            df_display['lucro_acumulado'] = df_display.apply(
+                lambda x: f"{st.session_state.cifrao if 'cifrao' in st.session_state else '$'} {x['lucro_acumulado']:.2f}", axis=1
+            )
+            
+            # Renomeia as colunas
+            df_display = df_display.rename(columns={
+                'timestamp': 'Horário',
+                'ativo': 'Ativo',
+                'direcao': 'Direção',
+                'valor': 'Valor',
+                'resultado': 'Resultado',
+                'lucro': 'Lucro',
+                'lucro_acumulado': 'Acumulado'
+            })
+            
+            # Exibe a tabela
+            st.dataframe(df_display, use_container_width=True)
+    
+    # Log de operações
+    st.markdown("<p style='margin-top: 20px; font-weight: bold;'>Log de Operações:</p>", unsafe_allow_html=True)
+    
+    # Container para o log
+    log_html = ""
+    for msg in st.session_state.log_messages:
+        log_html += f"{msg}<br>"
+    
+    st.markdown(f"""
+    <div class="log-container">
+        {log_html}
+    </div>
+    """, unsafe_allow_html=True)
 
-# Exibição dos resultados do catalogador em uma tabela formatada
-st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.markdown("<h4>Resultados do Catalogador</h4>", unsafe_allow_html=True)
-
-# Usar dataframe com label oculto para evitar avisos
-st.dataframe(linha, use_container_width=True, hide_index=True, 
-            label="Resultados do Catalogador", label_visibility="collapsed")
-
-st.markdown("</div>", unsafe_allow_html=True)
+# Rodapé
+st.markdown("""
+<div style="text-align: center; margin-top: 30px; opacity: 0.7;">
+    <p>Bot Trader IQ Option v1.0 | 2025</p>
+</div>
+""", unsafe_allow_html=True)

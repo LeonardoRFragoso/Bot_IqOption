@@ -1,7 +1,6 @@
 [LOGIN]
 email = vaniasayonara@gmail.com
 senha = Marleyj@23
-
 [AJUSTES]
 tipo = automatico
 valor_entrada = 3.0
@@ -9,12 +8,10 @@ stop_win = 50.0
 stop_loss = 70.0
 analise_medias = N
 velas_medias = 3
-
 [MARTINGALE]
 usar = S
 niveis = 1
 fator = 2.0
-
 [SOROS]
-usar = N
-niveis = 0
+usar = S
+niveis = 1
