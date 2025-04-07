@@ -355,6 +355,7 @@ def load_config():
 def save_config(config_data):
     try:
         config = ConfigObj()
+        config.encoding = 'utf-8'  # Definir codificação explicitamente para UTF-8
         
         # Atualiza as configurações
         config['LOGIN'] = {
@@ -505,37 +506,26 @@ def run_catalogador(api):
         
         # Verifica a disponibilidade de pares antes de executar o catalogador
         try:
-            pares_disponiveis = obter_pares_abertos(api, tipo_par)
-            if not pares_disponiveis or len(pares_disponiveis) == 0:
-                log_message(f"Nenhum par {tipo_par.lower()} disponível para negociação no momento.", "warning")
-                
-                # Se estiver no modo automático e não encontrou pares, tenta com outro tipo
-                if tipo_par == "Automático (Prioriza OTC)":
-                    log_message("Tentando com pares normais...", "info")
-                    pares_disponiveis = obter_pares_abertos(api, "Apenas Normais")
-                    if pares_disponiveis and len(pares_disponiveis) > 0:
-                        log_message(f"Encontrados {len(pares_disponiveis)} pares normais disponíveis.", "success")
-                        tipo_par = "Apenas Normais"
-                    else:
-                        log_message("Nenhum par normal disponível.", "warning")
-                elif tipo_par == "Apenas OTC":
-                    log_message("Tentando com pares normais...", "info")
-                    pares_disponiveis = obter_pares_abertos(api, "Apenas Normais")
-                    if pares_disponiveis and len(pares_disponiveis) > 0:
-                        log_message(f"Encontrados {len(pares_disponiveis)} pares normais disponíveis.", "success")
-                        log_message("Considere mudar para 'Apenas Normais' ou 'Automático' nas configurações.", "info")
-                    else:
-                        log_message("Nenhum par normal disponível.", "warning")
-                elif tipo_par == "Apenas Normais":
-                    log_message("Tentando com pares OTC...", "info")
-                    pares_disponiveis = obter_pares_abertos(api, "Apenas OTC")
-                    if pares_disponiveis and len(pares_disponiveis) > 0:
-                        log_message(f"Encontrados {len(pares_disponiveis)} pares OTC disponíveis.", "success")
-                        log_message("Considere mudar para 'Apenas OTC' ou 'Automático' nas configurações.", "info")
-                    else:
-                        log_message("Nenhum par OTC disponível.", "warning")
+            # Modificação para buscar todos os pares disponíveis independentemente do tipo
+            pares_otc = obter_pares_abertos(api, "Apenas OTC")
+            pares_normais = obter_pares_abertos(api, "Apenas Normais")
+            
+            # Combina todos os pares disponíveis
+            todos_pares = list(set(pares_otc + pares_normais))
+            
+            if not todos_pares or len(todos_pares) == 0:
+                log_message("Nenhum par disponível para negociação no momento.", "warning")
+                return None, 0
             else:
-                log_message(f"Encontrados {len(pares_disponiveis)} pares disponíveis: {', '.join(pares_disponiveis)}", "success")
+                log_message(f"Encontrados {len(todos_pares)} pares disponíveis: {', '.join(todos_pares)}", "success")
+                
+                if len(pares_otc) > 0:
+                    log_message(f"Pares OTC disponíveis: {len(pares_otc)}", "info")
+                if len(pares_normais) > 0:
+                    log_message(f"Pares normais disponíveis: {len(pares_normais)}", "info")
+                
+                # Usa todos os pares disponíveis para catalogação
+                pares_disponiveis = todos_pares
         except Exception as e:
             log_message(f"Erro ao verificar pares disponíveis: {str(e)}", "error")
             pares_disponiveis = []
@@ -544,8 +534,8 @@ def run_catalogador(api):
             log_message("Nenhum par disponível para catalogação. Verifique se o mercado está aberto.", "error")
             return None, 0
         
-        # Executa o catalogador
-        resultados, linha = catag(api, tipo_par)
+        # Executa o catalogador com todos os pares disponíveis
+        resultados, linha = catag(api, "Automático (Todos os Pares)")
         
         if not resultados or len(resultados) == 0:
             log_message("Nenhum resultado obtido na catalogação. Verifique se há pares disponíveis.", "error")
@@ -1220,6 +1210,7 @@ with st.sidebar:
                     step=0.1
                 )
         else:
+            # Garante que os valores sejam zero quando não está usando Martingale
             niveis_martingale = 1  # Valor padrão quando não está usando Martingale
             fator_martingale = 1.0  # Valor padrão quando não está usando Martingale
     
