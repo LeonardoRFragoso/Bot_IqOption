@@ -1,19 +1,20 @@
 [LOGIN]
 email = vaniasayonara@gmail.com
 senha = Marleyj@23
+
 [AJUSTES]
 tipo = automatico
-valor_entrada = 10.0
+valor_entrada = 3.0
 stop_win = 50.0
 stop_loss = 70.0
 analise_medias = N
 velas_medias = 3
-estrategia = Torres Gemeas
-ativo = EURGBP-OTC
+
 [MARTINGALE]
 usar = S
 niveis = 1
-fator = 2.3
+fator = 2.0
+
 [SOROS]
 usar = N
 niveis = 0
