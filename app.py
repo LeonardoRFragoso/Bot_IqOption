@@ -482,7 +482,7 @@ def validar_configuracoes():
 def carregar_configuracoes_seguras():
     """Carrega configurações com verificação de existência de chaves"""
     try:
-        config = ConfigObj('config.txt')
+        config = ConfigObj('config.txt', encoding='utf-8')
         
         # Verificar e criar seções se não existirem
         if 'LOGIN' not in config:
@@ -703,7 +703,7 @@ if st.sidebar.button("Salvar Configurações", use_container_width=True, key="sa
     try:
         # Lê a configuração existente ou cria uma nova
         try:
-            config = ConfigObj('config.txt')
+            config = ConfigObj('config.txt', encoding='utf-8')
         except:
             config = ConfigObj()
             
@@ -867,7 +867,7 @@ if "API" in st.session_state:
                 
                 st.markdown("<p style='margin-top:15px;'><b></b></p>", unsafe_allow_html=True)
                 st.markdown("<p style='margin-top: 10px; font-weight: bold;'>Selecione ou digite o ativo:</p>", unsafe_allow_html=True)
-                ativo_input = st.selectbox("Selecione o Ativo", ativos, index=0) if ativos else st.text_input("Digite o Ativo", value=default_ativo)
+                ativo_input = st.selectbox("Selecione o Ativo", ativos, index=0, key="ativo_select") if ativos else st.text_input("Digite o Ativo", value=default_ativo, key="ativo_input")
                 
                 # Botão para salvar a estratégia e ativo selecionados
                 if st.button("Salvar Estratégia e Ativo", use_container_width=True, key="salvar_estrategia"):
@@ -875,7 +875,7 @@ if "API" in st.session_state:
                     try:
                         # Lê a configuração existente ou cria uma nova
                         try:
-                            config = ConfigObj('config.txt')
+                            config = ConfigObj('config.txt', encoding='utf-8')
                         except:
                             config = ConfigObj()
                             
@@ -1298,7 +1298,7 @@ def run_bot(api):
                 # Análise de tendência com médias (opcional)
                 tendencia = None
                 if analise_medias == 'S':
-                    velas_tendencia = api.get_candles(ativo, timeframe, velas_medias, time.time())
+                    velas_tendencia = api.get_candles(ativo, timeframe, int(velas_medias), time.time())
                     tendencia = medias(velas_tendencia)
                     log_message(f"Tendência baseada em médias: {tendencia.upper()}")
                 
@@ -1344,7 +1344,7 @@ def run_bot(api):
                 minutos = float(now.strftime('%M.%S')[1:])
                 
                 # Verificar se é momento de entrada
-                entrar = True if (minutos >= 3.59 and minutos <= 4.00) or (minutos >= 8.59 and minutos <= 9.00) else False
+                entrar = True if (minutos >= 3.59 and minutos <= 4.00) or minutos >= 9.59 else False
                 
                 if not entrar:
                     # Aguardar próximo ciclo
@@ -1360,7 +1360,7 @@ def run_bot(api):
                 # Análise de tendência com médias (opcional)
                 tendencia = None
                 if analise_medias == 'S':
-                    velas_tendencia = api.get_candles(ativo, timeframe, velas_medias, time.time())
+                    velas_tendencia = api.get_candles(ativo, timeframe, int(velas_medias), time.time())
                     tendencia = medias(velas_tendencia)
                     log_message(f"Tendência baseada em médias: {tendencia.upper()}")
                 
@@ -1419,7 +1419,7 @@ def run_bot(api):
                 # Análise de tendência com médias (opcional)
                 tendencia = None
                 if analise_medias == 'S':
-                    velas_tendencia = api.get_candles(ativo, timeframe, velas_medias, time.time())
+                    velas_tendencia = api.get_candles(ativo, timeframe, int(velas_medias), time.time())
                     tendencia = medias(velas_tendencia)
                     log_message(f"Tendência baseada em médias: {tendencia.upper()}")
                 
@@ -1692,12 +1692,12 @@ if "API" in st.session_state:
                     <div class="stats-card">
                         <h4>Configuração Atual</h4>
                         <table class="stats-table">
-                            <tr><td></td><td>{estrategia_choice}</td></tr>
-                            <tr><td></td><td>{ativo_input}</td></tr>
-                            <tr><td></td><td>{valor_entrada}</td></tr>
-                            <tr><td></td><td>{tipo}</td></tr>
-                            <tr><td></td><td>{"Sim" if usar_martingale else "Não"}</td></tr>
-                            <tr><td></td><td>{"Sim" if usar_soros else "Não"}</td></tr>
+                            <tr><td>Estratégia:</td><td>{estrategia_choice}</td></tr>
+                            <tr><td>Ativo:</td><td>{ativo_input}</td></tr>
+                            <tr><td>Valor de Entrada:</td><td>{valor_entrada}</td></tr>
+                            <tr><td>Tipo:</td><td>{tipo}</td></tr>
+                            <tr><td>Martingale:</td><td>{"Sim" if usar_martingale else "Não"}</td></tr>
+                            <tr><td>Soros:</td><td>{"Sim" if usar_soros else "Não"}</td></tr>
                         </table>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1771,3 +1771,13 @@ if "API" in st.session_state:
             """, unsafe_allow_html=True)
             
             time.sleep(1)
+
+# Exibição dos resultados do catalogador em uma tabela formatada
+st.markdown("<div class='card'>", unsafe_allow_html=True)
+st.markdown("<h4>Resultados do Catalogador</h4>", unsafe_allow_html=True)
+
+# Usar dataframe com label oculto para evitar avisos
+st.dataframe(linha, use_container_width=True, hide_index=True, 
+            label="Resultados do Catalogador", label_visibility="collapsed")
+
+st.markdown("</div>", unsafe_allow_html=True)
