@@ -1,0 +1,7 @@
+[server]
+# Desativa o monitoramento de arquivos para evitar o erro "inotify watch limit reached"
+fileWatcherType = "none"
+
+[runner]
+# Configurações para melhorar a estabilidade
+fastReruns = false

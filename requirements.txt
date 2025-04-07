@@ -1,11 +1,12 @@
 git+https://github.com/Lu-Yi-Hsun/iqoptionapi.git
-configobj
-tabulate
-colorama
-beautifulsoup4
+configobj>=5.0.6
+tabulate>=0.9.0
+colorama>=0.4.6
+beautifulsoup4>=4.12.2
 streamlit>=1.22.0
 pandas>=1.5.3
 numpy>=1.24.3
 plotly>=5.14.0
 datetime
 tqdm>=4.65.0
+watchdog>=3.0.0
