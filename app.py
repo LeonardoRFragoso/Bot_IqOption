@@ -490,22 +490,85 @@ def run_catalogador(api):
         st.error("❌ Erro: API não conectada")
         return None, None
     
-    # Usa a configuração em cache se disponível
-    config = _config_cache if _config_cache is not None else load_config()
-    
-    if not config:
-        st.error("❌ Erro: Não foi possível carregar as configurações")
-        return None, None
-    
-    tipo_par = config['AJUSTES'].get('tipo_par', "Automático (Prioriza OTC)")
-    
-    log_message("Iniciando catalogação de ativos...")
-    log_message(f"Tipo de par selecionado: {tipo_par}")
-    
-    # Passa a configuração diretamente para evitar que seja carregada novamente
-    resultados, linha = catag(api, tipo_par, config)
-    
-    return resultados, linha
+    try:
+        log_message("Iniciando catalogação de ativos...", "info")
+        
+        # Usa a configuração em cache se disponível, ou carrega uma nova
+        if _config_cache is not None:
+            config = _config_cache
+            log_message("Usando configurações em cache", "info")
+        else:
+            config = load_config()
+            _config_cache = config
+        
+        tipo_par = "Automático (Prioriza OTC)"
+        if config and 'AJUSTES' in config and 'tipo_par' in config['AJUSTES']:
+            tipo_par = config['AJUSTES']['tipo_par']
+        
+        log_message(f"Tipo de par selecionado: {tipo_par}", "info")
+        
+        # Executa o catalogador com a opção "Automático (Todos os Pares)"
+        # Isso garante que todos os pares disponíveis serão considerados
+        log_message("Buscando todos os pares disponíveis (OTC e normais)...", "info")
+        
+        try:
+            # Executa a catalogação com todos os pares disponíveis
+            # Passa a configuração diretamente para evitar que seja carregada novamente
+            resultados, linha = catag(api, "Automático (Todos os Pares)", config)
+            
+            if not resultados or len(resultados) == 0:
+                log_message("Nenhum resultado obtido na catalogação. Verificando disponibilidade de pares...", "warning")
+                
+                # Verifica manualmente a disponibilidade de pares
+                pares_otc = obter_pares_abertos(api, "Apenas OTC")
+                pares_normais = obter_pares_abertos(api, "Apenas Normais")
+                
+                if pares_otc and len(pares_otc) > 0:
+                    log_message(f"Pares OTC disponíveis: {', '.join(pares_otc)}", "info")
+                else:
+                    log_message("Nenhum par OTC disponível no momento.", "warning")
+                
+                if pares_normais and len(pares_normais) > 0:
+                    log_message(f"Pares normais disponíveis: {', '.join(pares_normais)}", "info")
+                else:
+                    log_message("Nenhum par normal disponível no momento.", "warning")
+                
+                if (not pares_otc or len(pares_otc) == 0) and (not pares_normais or len(pares_normais) == 0):
+                    log_message("Nenhum par disponível para negociação. Verifique se o mercado está aberto.", "error")
+                else:
+                    log_message("Pares disponíveis encontrados, mas a catalogação falhou. Verifique o log para mais detalhes.", "error")
+                
+                return None, 0
+            
+            st.session_state.catalog_results = resultados
+            st.session_state.catalog_line = linha
+            
+            log_message(f"Catalogação concluída com sucesso. Encontrados {len(resultados)} resultados.", "success")
+            return resultados, linha
+            
+        except Exception as e:
+            log_message(f"Erro durante a catalogação: {str(e)}", "error")
+            
+            # Tenta obter informações sobre pares disponíveis para diagnóstico
+            try:
+                pares_otc = obter_pares_abertos(api, "Apenas OTC")
+                pares_normais = obter_pares_abertos(api, "Apenas Normais")
+                
+                if pares_otc and len(pares_otc) > 0:
+                    log_message(f"Pares OTC disponíveis: {len(pares_otc)}", "info")
+                if pares_normais and len(pares_normais) > 0:
+                    log_message(f"Pares normais disponíveis: {len(pares_normais)}", "info")
+                
+                if (not pares_otc or len(pares_otc) == 0) and (not pares_normais or len(pares_normais) == 0):
+                    log_message("Nenhum par disponível para negociação. Verifique se o mercado está aberto.", "error")
+            except:
+                log_message("Não foi possível verificar a disponibilidade de pares.", "error")
+            
+            return None, 0
+            
+    except Exception as e:
+        log_message(f"Erro ao executar catalogação: {str(e)}", "error")
+        return None, 0
 
 # Função para executar o bot de trading
 def run_trading_bot(api, estrategia, ativo, config_data):
