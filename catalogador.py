@@ -45,16 +45,20 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
             tipos_permitidos = ['binary', 'digital']
             
         print(f"\n📋 Tipos de ativos permitidos: {', '.join(tipos_permitidos)}")
+        logger.debug(f"Tipos de ativos permitidos: {', '.join(tipos_permitidos)}")
         
         # Verifica conexão e trata erro SSL
         try:
             if not API.check_connect():
                 print("⚠️ Reconectando API...")
+                logger.debug("Reconectando API devido a check_connect falso")
                 API = reconectar_api(API)
                 time.sleep(1)
         except Exception as e:
+            logger.error(f"Erro ao verificar conexão: {str(e)}")
             if hasattr(e, 'is_ssl') and e.is_ssl:
                 print("⚠️ Erro de SSL detectado. Tentando reconexão...")
+                logger.debug("Erro de SSL detectado. Tentando reconexão...")
                 API = reconectar_api(API)
                 time.sleep(1)
             else:
@@ -84,33 +88,48 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
                 # Força verificação da conexão
                 if not API.check_connect():
                     print("⚠️ Reconectando...")
+                    logger.debug("Reconectando API dentro do loop de tentativas")
                     API = reconectar_api(API)
                 time.sleep(1)
                 
+                logger.debug("Chamando API.get_all_open_time()")
+                # Adicionando timeout para evitar bloqueio indefinido
+                start_time = time.time()
                 all_asset = API.get_all_open_time()
+                elapsed_time = time.time() - start_time
+                logger.debug(f"API.get_all_open_time() retornou em {elapsed_time:.2f} segundos")
+                
                 if not all_asset:
+                    logger.warning("API retornou dados vazios")
                     raise Exception("API retornou dados vazios")
                 
                 print("✅ Dados de ativos obtidos")
+                logger.debug(f"Dados de ativos obtidos: {str(all_asset.keys())}")
                 
                 # Filtra apenas os tipos permitidos
                 tipos_disponiveis = [t for t in all_asset.keys() if t in tipos_permitidos]
                 if not tipos_disponiveis:
+                    logger.warning(f"Nenhum dos tipos permitidos {tipos_permitidos} está disponível")
                     raise Exception(f"Nenhum dos tipos permitidos {tipos_permitidos} está disponível")
                 
                 print(f"📊 Tipos encontrados: {tipos_disponiveis}")
+                logger.debug(f"Tipos encontrados: {tipos_disponiveis}")
                 break
                 
             except Exception as e:
                 tentativa += 1
-                print(f"❌ Erro ao obter ativos (tentativa {tentativa}): {str(e)}")
+                erro_msg = f"❌ Erro ao obter ativos (tentativa {tentativa}): {str(e)}"
+                print(erro_msg)
+                logger.error(erro_msg)
                 
                 if hasattr(e, 'is_ssl') and e.is_ssl:
                     print("⚠️ Erro de SSL detectado. Tentando reconexão...")
+                    logger.debug("Erro de SSL detectado. Tentando reconexão...")
                     time.sleep(2)
                     try:
                         API = reconectar_api(API)
-                    except:
+                    except Exception as reconnect_error:
+                        logger.error(f"Erro na reconexão: {str(reconnect_error)}")
                         if tentativa >= max_tentativas:
                             return [], "Falha ao reconectar após erro SSL"
                 elif tentativa < max_tentativas:
@@ -118,29 +137,44 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
                 else:
                     return [], f"Falha ao obter ativos após {max_tentativas} tentativas: {str(e)}"
         
+        # Verificação de segurança se all_asset ainda é None após todas as tentativas
+        if not all_asset:
+            logger.error("Falha ao obter ativos após todas as tentativas")
+            return [], "Falha ao obter ativos após todas as tentativas"
+            
         # Verifica pares disponíveis apenas nos tipos permitidos
         pares_normais_abertos = []
         pares_otc_abertos = []
         
         print("\n📊 Verificando disponibilidade dos ativos...")
+        logger.debug("Verificando disponibilidade dos ativos")
         for tipo in tipos_disponiveis:
             print(f"\nTipo: {tipo}")
+            logger.debug(f"Verificando tipo: {tipo}")
             
             # Verifica pares normais
             if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas Normais"]:
                 for par in pares_base:
-                    if par in all_asset.get(tipo, {}) and all_asset[tipo][par].get('open', False):
-                        if par not in pares_normais_abertos:
-                            pares_normais_abertos.append(par)
-                            print(f"  ✅ Par normal: {par}")
+                    try:
+                        if par in all_asset.get(tipo, {}) and all_asset[tipo][par].get('open', False):
+                            if par not in pares_normais_abertos:
+                                pares_normais_abertos.append(par)
+                                print(f"  ✅ Par normal: {par}")
+                                logger.debug(f"Par normal disponível: {par}")
+                    except Exception as e:
+                        logger.error(f"Erro ao verificar par normal {par}: {str(e)}")
             
             # Verifica pares OTC
             if tipo_par in ["Automático (Prioriza OTC)", "Automático (Todos os Pares)", "Apenas OTC"]:
                 for par in pares_otc:
-                    if par in all_asset.get(tipo, {}) and all_asset[tipo][par].get('open', False):
-                        if par not in pares_otc_abertos:
-                            pares_otc_abertos.append(par)
-                            print(f"  ✅ Par OTC: {par}")
+                    try:
+                        if par in all_asset.get(tipo, {}) and all_asset[tipo][par].get('open', False):
+                            if par not in pares_otc_abertos:
+                                pares_otc_abertos.append(par)
+                                print(f"  ✅ Par OTC: {par}")
+                                logger.debug(f"Par OTC disponível: {par}")
+                    except Exception as e:
+                        logger.error(f"Erro ao verificar par OTC {par}: {str(e)}")
         
         # Seleciona os pares conforme a preferência
         pares_disponiveis = []
@@ -159,9 +193,11 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
             print(f"\n✅ Usando {len(pares_disponiveis)} pares normais")
         
         if not pares_disponiveis:
+            logger.error(f"Nenhum par disponível para o tipo {tipo_par} nos tipos {tipos_permitidos}")
             return [], f"Nenhum par disponível para o tipo {tipo_par} nos tipos {tipos_permitidos}"
         
         print(f"\n📊 Pares selecionados: {', '.join(pares_disponiveis)}")
+        logger.debug(f"Pares selecionados: {', '.join(pares_disponiveis)}")
         return pares_disponiveis, None
         
     except Exception as e:
@@ -312,7 +348,7 @@ def obter_resultados(API, pares):
 
             while tentativas < 3 and velas is None:
                 try:
-                    print("🕒 Solicitando velas...")
+                    print(f"\n⏳ Tentativa {tentativa + 1}/{3} de obter velas...")
                     
                     # Verifica conexão antes de obter velas
                     if not API.check_connect():
@@ -342,7 +378,7 @@ def obter_resultados(API, pares):
 
                 except Exception as e:
                     tentativas += 1
-                    print(f"⚠️ Tentativa {tentativas}/3: Erro ao obter velas de {par} - {str(e)}")
+                    print(f"⚠️ Tentativa {tentativa + 1}/3: Erro ao obter velas de {par} - {str(e)}")
                     try:
                         API = reconectar_api(API)
                         if not API.check_connect():
