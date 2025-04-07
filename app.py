@@ -1090,8 +1090,13 @@ def log_message(message, message_type="info"):
 with st.sidebar:
     st.markdown("<h3 class='sub-header'>Configurações</h3>", unsafe_allow_html=True)
     
-    # Carrega configurações existentes
-    config = load_config()
+    # Carrega configurações existentes usando o cache
+    if _config_cache is not None:
+        config = _config_cache
+        log_message("Usando configurações em cache para a interface", "info")
+    else:
+        config = load_config()
+        _config_cache = config
     
     # Seção de Login
     with st.expander("Credenciais IQ Option", expanded=True):
