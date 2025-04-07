@@ -8,6 +8,7 @@ stop_win = 50.0
 stop_loss = 70.0
 analise_medias = N
 velas_medias = 3
+tipo_par = Automático (Todos os Pares)
 [MARTINGALE]
 usar = S
 niveis = 1
