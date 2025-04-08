@@ -6,12 +6,17 @@ from tabulate import tabulate
 
 def safe_get_candles(API, par, timeframe, count, end_time):
     """
-    Tenta obter candles utilizando API.get_candles com várias tentativas.
-    Caso a conexão falhe, tenta reconectar e reexecutar a chamada.
+    Tenta obter candles utilizando API.get_candles com múltiplas tentativas.
+    Se a mensagem de erro indicar "get_candles need reconnect", recontrói a instância
+    da API usando as credenciais do arquivo de configuração e reconecta.
     """
     max_attempts = 5
     attempts = 0
     candles = None
+    config = ConfigObj('config.txt')
+    email = config['LOGIN']['email']
+    senha = config['LOGIN']['senha']
+    
     while attempts < max_attempts and not candles:
         try:
             candles = API.get_candles(par, timeframe, count, end_time)
@@ -20,14 +25,19 @@ def safe_get_candles(API, par, timeframe, count, end_time):
         except Exception as e:
             err_msg = str(e)
             print(f"⚠️ Erro get_candles para {par} (tentativa {attempts+1}/{max_attempts}): {err_msg}")
-            # Se a mensagem indicar necessidade de reconexão, tenta reconectar e ajustar o saldo
             if "get_candles need reconnect" in err_msg:
                 try:
-                    API.connect()
-                    # Se houver opção de conta, use 'PRACTICE' ou 'REAL' conforme desejado
-                    API.change_balance('PRACTICE')
+                    # Recria a instância e reconecta
+                    API = IQ_Option(email, senha)
+                    conectado, motivo = API.connect()
+                    if conectado:
+                        # Escolhe o tipo de conta apropriado; ajuste 'PRACTICE' ou 'REAL' conforme necessário
+                        API.change_balance('PRACTICE')
+                        print(f"🔄 Reconectado com sucesso para {par}.")
+                    else:
+                        print(f"❌ Falha na reconexão: {motivo}")
                 except Exception as e2:
-                    print(f"❌ Erro na reconexão: {str(e2)}")
+                    print(f"❌ Erro durante reconexão: {e2}")
         attempts += 1
         time.sleep(3)
     return candles
@@ -46,7 +56,7 @@ def obter_pares_abertos(API):
 def analisar_velas(velas, tipo_estrategia):
     resultados = {'doji': 0, 'win': 0, 'loss': 0, 'gale1': 0, 'gale2': 0}
     for i in range(2, len(velas)):
-        # Remove o primeiro dígito dos minutos (como na versão original)
+        # A forma original de extrair os minutos (removendo o primeiro dígito)
         minutos = float(datetime.fromtimestamp(velas[i]['from']).strftime('%M')[1:])
         if tipo_estrategia == 'mhi' and (minutos == 5 or minutos == 0):
             analisar_mhi(velas, i, resultados)
@@ -61,7 +71,7 @@ def analisar_mhi(velas, i, resultados, timeframe=60):
         vela1 = 'Verde' if velas[i-3]['open'] < velas[i-3]['close'] else 'Vermelha'
         vela2 = 'Verde' if velas[i-2]['open'] < velas[i-2]['close'] else 'Vermelha'
         vela3 = 'Verde' if velas[i-1]['open'] < velas[i-1]['close'] else 'Vermelha'
-        # Define a direção com base no maior número de "Verde" (sinal de alta)
+        # Define direção: se mais de 1 vela for verde, direção é Verde; caso contrário, Vermelha
         direcao = 'Verde' if [vela1, vela2, vela3].count('Verde') > 1 else 'Vermelha'
         entradas = [
             'Verde' if velas[i+j]['open'] < velas[i+j]['close'] else 'Vermelha'
@@ -114,7 +124,7 @@ def obter_resultados(API, pares):
         for par in pares:
             tentativas = 0
             velas = None
-            # Utilize safe_get_candles para recuperar os candles com tentativa de reconexão
+            # Usa safe_get_candles para robustez na obtenção de candles
             while tentativas < 5 and not velas:
                 if estrategia != 'mhi_m5':
                     velas = safe_get_candles(API, par, timeframe, qnt_velas, time.time())
@@ -124,7 +134,7 @@ def obter_resultados(API, pares):
                     print(f"⚠️ Tentativa {tentativas+1}: falha ao obter velas de {par}. Reconectando em 2 segundos...")
                     try:
                         API.connect()
-                        API.change_balance('PRACTICE')  # Ajuste conforme necessário
+                        API.change_balance('PRACTICE')
                     except Exception as recon_err:
                         print(f"Erro na reconexão: {recon_err}")
                     time.sleep(2)
@@ -144,28 +154,23 @@ def catag(API):
     config = ConfigObj('config.txt')
     pares = obter_pares_abertos(API)
     resultados = obter_resultados(API, pares)
-
     if config['MARTINGALE']['usar_martingale'] == 'S':
         linha = 2 + int(config['MARTINGALE']['niveis_martingale'])
     else:
         linha = 2
-
     resultados_ordenados = sorted(resultados, key=lambda x: x[linha], reverse=True)
     return resultados_ordenados, linha
 
 if __name__ == "__main__":
     config = ConfigObj('config.txt')
     API = IQ_Option(config['LOGIN']['email'], config['LOGIN']['senha'])
-
     conectado, erro = API.connect()
     if conectado:
         print("✅ Conexão com IQ Option realizada com sucesso!")
     else:
         print(f"❌ Falha ao conectar: {erro}")
         exit()
-
     API.change_balance('PRACTICE')
-
     catalog, linha = catag(API)
     headers = ["Estratégia", "Par", "Win%", "Gale1%", "Gale2%"]
     print(tabulate(catalog, headers=headers, tablefmt="pretty"))
