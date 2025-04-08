@@ -14,6 +14,7 @@ import numpy as np
 import base64
 import random
 from io import BytesIO
+from utils import safe_get_candles
 
 # Set page configuration
 st.set_page_config(

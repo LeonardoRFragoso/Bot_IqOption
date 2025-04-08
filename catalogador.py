@@ -1,8 +1,11 @@
-from iqoptionapi.stable_api import IQ_Option
+from iqoptionapi.stable_api import IQ_Option 
 import time
 from configobj import ConfigObj
 from datetime import datetime
 from tabulate import tabulate
+from app import safe_get_candles  # Importa a função de reconexão segura
+from utils import safe_get_candles
+
 
 def obter_pares_abertos(API):
     todos_os_ativos = API.get_all_open_time()
@@ -32,6 +35,7 @@ def analisar_mhi(velas, i, resultados, timeframe=60):
         vela1 = 'Verde' if velas[i-3]['open'] < velas[i-3]['close'] else 'Vermelha'
         vela2 = 'Verde' if velas[i-2]['open'] < velas[i-2]['close'] else 'Vermelha'
         vela3 = 'Verde' if velas[i-1]['open'] < velas[i-1]['close'] else 'Vermelha'
+        # Define a direção com base nas três velas anteriores
         direcao = 'Verde' if [vela1, vela2, vela3].count('Verde') > 1 else 'Vermelha'
         entradas = [
             'Verde' if velas[i+j]['open'] < velas[i+j]['close'] else 'Vermelha'
@@ -74,6 +78,7 @@ def calcular_percentuais(resultados):
     return [win_rate, gale1_rate, gale2_rate]
 
 def obter_resultados(API, pares):
+    from app import safe_get_candles  # Importa do app principal
     timeframe = 60
     qnt_velas = 120
     qnt_velas_m5 = 146
@@ -82,24 +87,18 @@ def obter_resultados(API, pares):
 
     for estrategia in estrategias:
         for par in pares:
-            tentativas = 0
             velas = None
+            tentativas = 0
             while tentativas < 5 and not velas:
-                try:
-                    if estrategia != 'mhi_m5':
-                        velas = API.get_candles(par, timeframe, qnt_velas, time.time())
-                    else:
-                        velas = API.get_candles(par, timeframe, qnt_velas_m5, time.time())
-                except Exception as e:
-                    print(f"Erro ao obter velas: {e}")
-                    velas = None
+                if estrategia != 'mhi_m5':
+                    velas, API = safe_get_candles(API, par, timeframe, qnt_velas, time.time())
+                else:
+                    velas, API = safe_get_candles(API, par, timeframe, qnt_velas_m5, time.time())
 
                 if not velas:
-                    print(f"⚠️ Tentativa {tentativas+1}: falha ao obter velas de {par}. Reconectando em 2 segundos...")
-                    API.connect()
-                    API.change_balance('PRACTICE')
-                    time.sleep(2)
+                    print(f"⚠️ Tentativa {tentativas+1}: falha ao obter velas de {par}")
                     tentativas += 1
+                    time.sleep(2)
 
             if velas:
                 resultados_estrategia = analisar_velas(velas, estrategia)
