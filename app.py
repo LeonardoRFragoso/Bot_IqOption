@@ -156,44 +156,41 @@ if 'niveis_soros' not in st.session_state:
 # =========================
 # Função: Wrapper para get_candles (com tentativas de reconexão aprimoradas)
 # =========================
-import random
-
-def safe_get_candles(api, pair, timeframe, count, end_time):
-    attempts = 0
+def safe_get_candles(api, par, timeframe, count, end_time):
+    from configobj import ConfigObj
     max_attempts = 5
+    attempts = 0
     candles = None
-    email = st.session_state.email
-    senha = st.session_state.senha
-    tipo_conta = st.session_state.account_type or 'PRACTICE'
 
-    while attempts < max_attempts:
+    config = ConfigObj('config.txt')
+    email = config['LOGIN']['email']
+    senha = config['LOGIN']['senha']
+
+    while attempts < max_attempts and not candles:
         try:
-            candles = api.get_candles(pair, timeframe, count, end_time)
+            candles = api.get_candles(par, timeframe, count, end_time)
             if candles:
                 return candles, api
         except Exception as e:
             err_msg = str(e)
-            add_log(f"Erro get_candles: {err_msg} (tentativa {attempts+1}/{max_attempts})", "error")
+            add_log(f"⚠️ Erro get_candles para {par} (tentativa {attempts+1}/{max_attempts}): {err_msg}", "error")
             if "get_candles need reconnect" in err_msg:
-                # Tenta reconectar com backoff exponencial + jitter
                 try:
                     new_api = IQ_Option(email, senha)
-                    connected, reason = new_api.connect()
-                    if connected:
-                        new_api.change_balance(tipo_conta)
-                        st.session_state.api = new_api
+                    conectado, motivo = new_api.connect()
+                    if conectado:
+                        new_api.change_balance('PRACTICE')  # ou 'REAL' se for o caso
                         api = new_api
-                        add_log("Reconectado com sucesso!", "success")
+                        st.session_state.api = new_api
+                        add_log("🔄 Reconectado com sucesso!", "success")
                     else:
-                        add_log(f"Falha ao reconectar: {reason}", "error")
-                except Exception as recon_err:
-                    add_log(f"Erro crítico na reconexão: {str(recon_err)}", "error")
-            # Espera com backoff exponencial + jitter
-            wait_time = (2 ** attempts) + random.uniform(0, 2)
-            time.sleep(wait_time)
-            attempts += 1
+                        add_log(f"❌ Falha na reconexão: {motivo}", "error")
+                except Exception as e2:
+                    add_log(f"❌ Erro durante reconexão: {e2}", "error")
+        attempts += 1
+        time.sleep(2)
 
-    return None, api
+    return candles, api
 
 
 # =========================
