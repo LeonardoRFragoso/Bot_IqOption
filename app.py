@@ -159,34 +159,35 @@ def safe_get_candles(api, pair, timeframe, count, end_time):
     attempts = 0
     candles = None
     max_attempts = 5
+    email = st.session_state.email
+    senha = st.session_state.senha
+    tipo_conta = st.session_state.account_type or 'PRACTICE'
 
     while attempts < max_attempts and not candles:
         try:
             candles = api.get_candles(pair, timeframe, count, end_time)
             if candles:
-                return candles
+                return candles, api
         except Exception as e:
             err_msg = str(e)
             add_log(f"Erro get_candles para {pair}: {err_msg}. Tentando reconectar (tentativa {attempts+1}/{max_attempts})...", "error")
             if "get_candles need reconnect" in err_msg:
                 try:
-                    if st.session_state.email and st.session_state.senha:
-                        new_api = IQ_Option(st.session_state.email, st.session_state.senha)
-                        check, reason = new_api.connect()
-                        if check:
-                            if st.session_state.account_type:
-                                new_api.change_balance(st.session_state.account_type)
-                            st.session_state.api = new_api  # Atualiza no session_state
-                            api = new_api  # Atualiza variável local
-                            add_log("Reconectado com sucesso à IQOption.", "success")
-                        else:
-                            add_log(f"Falha ao reconectar: {reason}", "error")
+                    new_api = IQ_Option(email, senha)
+                    connected, reason = new_api.connect()
+                    if connected:
+                        new_api.change_balance(tipo_conta)
+                        st.session_state.api = new_api
+                        api = new_api
+                        add_log("Reconectado com sucesso!", "success")
+                    else:
+                        add_log(f"Falha ao reconectar: {reason}", "error")
                 except Exception as recon_err:
                     add_log(f"Erro crítico na reconexão: {str(recon_err)}", "error")
         attempts += 1
-        time.sleep(3)
+        time.sleep(2)
 
-    return candles
+    return candles, api
 
 # =========================
 # Funções auxiliares: logs, conexões e outras
@@ -328,7 +329,7 @@ def get_results(api, pairs, progress_bar=None):
             attempts = 0
             candles = None
             while attempts < 3 and not candles:
-                candles = safe_get_candles(api, pair, timeframe, qnt_velas if strategy != 'mhi_m5' else qnt_velas_m5, time.time())
+                candles, api = safe_get_candles(api, pair, timeframe, qnt_velas if strategy != 'mhi_m5' else qnt_velas_m5, time.time())
                 if not candles:
                     add_log(f"⚠️ Tentativa {attempts+1}: falha ao obter velas de {pair}. Tentando reconectar...", "warning")
                     api.connect()
@@ -424,10 +425,10 @@ def run_mhi_strategy(api, asset, entry_value, trade_type, martingale_levels, mar
             timeframe = 60
             candles_count = 3
             if analyze_mas == 'S':
-                candles = safe_get_candles(api, asset, timeframe, mas_candles, time.time())
+                candles, api = safe_get_candles(api, asset, timeframe, mas_candles, time.time())
                 trend = analyze_trend(candles, mas_candles)
             else:
-                candles = safe_get_candles(api, asset, timeframe, candles_count, time.time())
+                candles, api = safe_get_candles(api, asset, timeframe, candles_count, time.time())
             st.session_state.candles_data = candles
             try:
                 vela1 = 'Verde' if candles[-3]['open'] < candles[-3]['close'] else ('Vermelha' if candles[-3]['open'] > candles[-3]['close'] else 'Doji')
@@ -488,10 +489,10 @@ def run_torres_gemeas_strategy(api, asset, entry_value, trade_type, martingale_l
             timeframe = 60
             candles_count = 4
             if analyze_mas == 'S':
-                candles = safe_get_candles(api, asset, timeframe, mas_candles, time.time())
+                candles, api = safe_get_candles(api, asset, timeframe, mas_candles, time.time())
                 trend = analyze_trend(candles, mas_candles)
             else:
-                candles = safe_get_candles(api, asset, timeframe, candles_count, time.time())
+                candles, api = safe_get_candles(api, asset, timeframe, candles_count, time.time())
             st.session_state.candles_data = candles
             try:
                 vela4 = 'Verde' if candles[-4]['open'] < candles[-4]['close'] else ('Vermelha' if candles[-4]['open'] > candles[-4]['close'] else 'Doji')
@@ -547,10 +548,10 @@ def run_mhi_m5_strategy(api, asset, entry_value, trade_type, martingale_levels, 
             timeframe = 300
             candles_count = 3
             if analyze_mas == 'S':
-                candles = safe_get_candles(api, asset, timeframe, mas_candles, time.time())
+                candles, api = safe_get_candles(api, asset, timeframe, mas_candles, time.time())
                 trend = analyze_trend(candles, mas_candles)
             else:
-                candles = safe_get_candles(api, asset, timeframe, candles_count, time.time())
+                candles, api = safe_get_candles(api, asset, timeframe, candles_count, time.time())
             st.session_state.candles_data = candles
             try:
                 vela1 = 'Verde' if candles[-3]['open'] < candles[-3]['close'] else ('Vermelha' if candles[-3]['open'] > candles[-3]['close'] else 'Doji')
