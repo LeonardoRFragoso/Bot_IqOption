@@ -159,6 +159,7 @@ def safe_get_candles(api, pair, timeframe, count, end_time):
     attempts = 0
     candles = None
     max_attempts = 5
+
     while attempts < max_attempts and not candles:
         try:
             candles = api.get_candles(pair, timeframe, count, end_time)
@@ -166,26 +167,26 @@ def safe_get_candles(api, pair, timeframe, count, end_time):
                 return candles
         except Exception as e:
             err_msg = str(e)
-            add_log(f"Erro get_candles para {pair}: {err_msg}. Tentativa {attempts+1}/{max_attempts}.", "error")
+            add_log(f"Erro get_candles para {pair}: {err_msg}. Tentando reconectar (tentativa {attempts+1}/{max_attempts})...", "error")
             if "get_candles need reconnect" in err_msg:
-                if st.session_state.email and st.session_state.senha:
-                    try:
+                try:
+                    if st.session_state.email and st.session_state.senha:
                         new_api = IQ_Option(st.session_state.email, st.session_state.senha)
-                        connected, reason = new_api.connect()
-                        if connected:
+                        check, reason = new_api.connect()
+                        if check:
                             if st.session_state.account_type:
                                 new_api.change_balance(st.session_state.account_type)
-                            st.session_state.api = new_api  # Atualiza o session_state
-                            api = new_api  # Atualiza a variável local
-                            add_log("Reconectado com sucesso!", "success")
+                            st.session_state.api = new_api  # Atualiza no session_state
+                            api = new_api  # Atualiza variável local
+                            add_log("Reconectado com sucesso à IQOption.", "success")
                         else:
-                            add_log(f"Falha na reconexão: {reason}", "error")
-                    except Exception as e2:
-                        add_log(f"Erro durante reconexão: {str(e2)}", "error")
+                            add_log(f"Falha ao reconectar: {reason}", "error")
+                except Exception as recon_err:
+                    add_log(f"Erro crítico na reconexão: {str(recon_err)}", "error")
         attempts += 1
         time.sleep(3)
-    return candles
 
+    return candles
 
 # =========================
 # Funções auxiliares: logs, conexões e outras
