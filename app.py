@@ -83,6 +83,7 @@ st.markdown("""
 # =========================
 # Inicialização do Session State
 # =========================
+# Variáveis já existentes
 if 'api' not in st.session_state:
     st.session_state.api = None
 if 'connected' not in st.session_state:
@@ -124,8 +125,36 @@ if 'account_balance' not in st.session_state:
 if 'log_messages' not in st.session_state:
     st.session_state.log_messages = []
 
+# Variáveis de configuração (novas)
+if 'email' not in st.session_state:
+    st.session_state.email = ""
+if 'senha' not in st.session_state:
+    st.session_state.senha = ""
+if 'tipo' not in st.session_state:
+    st.session_state.tipo = "automatico"
+if 'valor_entrada' not in st.session_state:
+    st.session_state.valor_entrada = 3.0
+if 'stop_win' not in st.session_state:
+    st.session_state.stop_win = 50.0
+if 'stop_loss' not in st.session_state:
+    st.session_state.stop_loss = 70.0
+if 'analise_medias' not in st.session_state:
+    st.session_state.analise_medias = "N"
+if 'velas_medias' not in st.session_state:
+    st.session_state.velas_medias = 3
+if 'usar_martingale' not in st.session_state:
+    st.session_state.usar_martingale = True
+if 'niveis_martingale' not in st.session_state:
+    st.session_state.niveis_martingale = 1
+if 'fator_martingale' not in st.session_state:
+    st.session_state.fator_martingale = 2.0
+if 'usar_soros' not in st.session_state:
+    st.session_state.usar_soros = True
+if 'niveis_soros' not in st.session_state:
+    st.session_state.niveis_soros = 1
+
 # =========================
-# Função: Wrapper para get_candles
+# Função: Wrapper para get_candles (com tentativas de reconexão)
 # =========================
 def safe_get_candles(api, pair, timeframe, count, end_time):
     attempts = 0
@@ -139,7 +168,6 @@ def safe_get_candles(api, pair, timeframe, count, end_time):
             add_log(f"Erro get_candles para {pair}: {str(e)}. Tentando reconectar...", "error")
             try:
                 api.connect()
-                # Se houver indicação de qual conta usar, pode ser passado via st.session_state.account_type
                 if st.session_state.account_type:
                     api.change_balance(st.session_state.account_type)
             except Exception as e2:
@@ -149,7 +177,8 @@ def safe_get_candles(api, pair, timeframe, count, end_time):
     return candles
 
 # =========================
-# Funções Auxiliares
+# Outras funções auxiliares, análise de candles, estratégias e make_trade
+# (O código a seguir permanece inalterado, exceto pela utilização do safe_get_candles nas chamadas de get_candles)
 # =========================
 
 def add_log(message, level="info"):
@@ -171,7 +200,6 @@ def connect_iqoption(email, password):
     check, reason = st.session_state.api.connect()
     if check:
         st.session_state.connected = True
-        # Atualiza dados do perfil e saldo
         profile = st.session_state.api.get_profile_ansyc()
         if profile:
             st.session_state.cifrao = str(profile.get('currency_char', '$'))
@@ -283,7 +311,6 @@ def get_results(api, pairs, progress_bar=None):
     
     total_operations = len(strategies) * len(pairs)
     operation_count = 0
-    
     for strategy in strategies:
         for pair in pairs:
             if progress_bar:
@@ -618,7 +645,7 @@ with st.sidebar.form(key='config_form'):
     st.checkbox("Usar Soros", key="input_usar_soros", value=st.session_state.usar_soros)
     st.number_input("Níveis de Soros", key="input_niveis_soros", value=st.session_state.niveis_soros, min_value=0)
     submit_config = st.form_submit_button("Salvar Configurações")
-
+    
 if submit_config:
     st.session_state.email = st.session_state.input_email
     st.session_state.senha = st.session_state.input_senha
@@ -642,7 +669,7 @@ if st.sidebar.button("Conectar IQOption"):
         success, msg = connect_iqoption(st.session_state.email, st.session_state.senha)
         if success:
             st.sidebar.success(msg)
-            st.session_state.account_type = account_type  # Salva o tipo de conta selecionado.
+            st.session_state.account_type = account_type
         else:
             st.sidebar.error(msg)
     else:
