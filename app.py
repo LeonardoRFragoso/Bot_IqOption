@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 import base64
+import random
 from io import BytesIO
 
 # Set page configuration
@@ -155,23 +156,26 @@ if 'niveis_soros' not in st.session_state:
 # =========================
 # Função: Wrapper para get_candles (com tentativas de reconexão aprimoradas)
 # =========================
+import random
+
 def safe_get_candles(api, pair, timeframe, count, end_time):
     attempts = 0
-    candles = None
     max_attempts = 5
+    candles = None
     email = st.session_state.email
     senha = st.session_state.senha
     tipo_conta = st.session_state.account_type or 'PRACTICE'
 
-    while attempts < max_attempts and not candles:
+    while attempts < max_attempts:
         try:
             candles = api.get_candles(pair, timeframe, count, end_time)
             if candles:
                 return candles, api
         except Exception as e:
             err_msg = str(e)
-            add_log(f"Erro get_candles para {pair}: {err_msg}. Tentando reconectar (tentativa {attempts+1}/{max_attempts})...", "error")
+            add_log(f"Erro get_candles: {err_msg} (tentativa {attempts+1}/{max_attempts})", "error")
             if "get_candles need reconnect" in err_msg:
+                # Tenta reconectar com backoff exponencial + jitter
                 try:
                     new_api = IQ_Option(email, senha)
                     connected, reason = new_api.connect()
@@ -184,10 +188,13 @@ def safe_get_candles(api, pair, timeframe, count, end_time):
                         add_log(f"Falha ao reconectar: {reason}", "error")
                 except Exception as recon_err:
                     add_log(f"Erro crítico na reconexão: {str(recon_err)}", "error")
-        attempts += 1
-        time.sleep(2)
+            # Espera com backoff exponencial + jitter
+            wait_time = (2 ** attempts) + random.uniform(0, 2)
+            time.sleep(wait_time)
+            attempts += 1
 
-    return candles, api
+    return None, api
+
 
 # =========================
 # Funções auxiliares: logs, conexões e outras
