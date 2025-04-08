@@ -1,11 +1,8 @@
-from iqoptionapi.stable_api import IQ_Option 
+from iqoptionapi.stable_api import IQ_Option
 import time
 from configobj import ConfigObj
 from datetime import datetime
 from tabulate import tabulate
-from app import safe_get_candles  # Importa a função de reconexão segura
-from utils import safe_get_candles
-
 
 def obter_pares_abertos(API):
     todos_os_ativos = API.get_all_open_time()
@@ -35,15 +32,14 @@ def analisar_mhi(velas, i, resultados, timeframe=60):
         vela1 = 'Verde' if velas[i-3]['open'] < velas[i-3]['close'] else 'Vermelha'
         vela2 = 'Verde' if velas[i-2]['open'] < velas[i-2]['close'] else 'Vermelha'
         vela3 = 'Verde' if velas[i-1]['open'] < velas[i-1]['close'] else 'Vermelha'
-        # Define a direção com base nas três velas anteriores
         direcao = 'Verde' if [vela1, vela2, vela3].count('Verde') > 1 else 'Vermelha'
         entradas = [
             'Verde' if velas[i+j]['open'] < velas[i+j]['close'] else 'Vermelha'
             for j in range(3)
         ]
         resultados = atualizar_resultados(entradas, direcao, resultados)
-    except Exception as e:
-        print(f"Erro em analisar_mhi: {e}")
+    except:
+        pass
 
 def analisar_torres(velas, i, resultados):
     try:
@@ -54,8 +50,8 @@ def analisar_torres(velas, i, resultados):
             for j in range(3)
         ]
         resultados = atualizar_resultados(entradas, direcao, resultados)
-    except Exception as e:
-        print(f"Erro em analisar_torres: {e}")
+    except:
+        pass
 
 def atualizar_resultados(entradas, direcao, resultados):
     if entradas[0] == direcao:
@@ -78,7 +74,6 @@ def calcular_percentuais(resultados):
     return [win_rate, gale1_rate, gale2_rate]
 
 def obter_resultados(API, pares):
-    from app import safe_get_candles  # Importa do app principal
     timeframe = 60
     qnt_velas = 120
     qnt_velas_m5 = 146
@@ -87,27 +82,30 @@ def obter_resultados(API, pares):
 
     for estrategia in estrategias:
         for par in pares:
-            velas = None
             tentativas = 0
+            velas = None
+
             while tentativas < 5 and not velas:
-                if estrategia != 'mhi_m5':
-                    velas, API = safe_get_candles(API, par, timeframe, qnt_velas, time.time())
-                else:
-                    velas, API = safe_get_candles(API, par, timeframe, qnt_velas_m5, time.time())
-
+                velas = API.get_candles(par, timeframe, qnt_velas if estrategia != 'mhi_m5' else qnt_velas_m5, time.time())
+                
                 if not velas:
-                    print(f"⚠️ Tentativa {tentativas+1}: falha ao obter velas de {par}")
+                    print(f"⚠️ Tentativa {tentativas+1}: falha ao obter velas de {par}. Reconectando em 2 segundos...")
+                    API.connect()
+                    API.change_balance('PRACTICE')  # Certifique-se de reconectar à conta correta
+                    time.sleep(2)  # Aguarda 2 segundos antes de tentar novamente
                     tentativas += 1
-                    time.sleep(2)
-
+            
             if velas:
                 resultados_estrategia = analisar_velas(velas, estrategia)
                 percentuais = calcular_percentuais(resultados_estrategia)
                 resultados.append([estrategia.upper(), par] + percentuais)
-                time.sleep(1)
+                time.sleep(1)  # Pequeno intervalo após sucesso para evitar bloqueio
             else:
                 print(f"❌ Não foi possível obter os dados do ativo {par} após múltiplas tentativas.")
+            
     return resultados
+
+
 
 def catag(API):
     config = ConfigObj('config.txt')
@@ -122,16 +120,22 @@ def catag(API):
     resultados_ordenados = sorted(resultados, key=lambda x: x[linha], reverse=True)
     return resultados_ordenados, linha
 
+# Exemplo de uso
+# Exemplo de uso corrigido
 if __name__ == "__main__":
     config = ConfigObj('config.txt')
     API = IQ_Option(config['LOGIN']['email'], config['LOGIN']['senha'])
+
     conectado, erro = API.connect()
     if conectado:
         print("✅ Conexão com IQ Option realizada com sucesso!")
     else:
         print(f"❌ Falha ao conectar: {erro}")
         exit()
-    API.change_balance('PRACTICE')
+
+    # Adicione esta linha: Selecionar conta (PRACTICE = Demo, REAL = Real)
+    API.change_balance('PRACTICE')  # use 'REAL' para conta real
+
     catalog, linha = catag(API)
     headers = ["Estratégia", "Par", "Win%", "Gale1%", "Gale2%"]
     print(tabulate(catalog, headers=headers, tablefmt="pretty"))
