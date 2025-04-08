@@ -80,21 +80,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Logo
-def render_logo():
-    st.markdown("""
-    <div style="text-align: center;">
-    <h1 class="main-header">
-    ██████╗ ██╗   ██╗███████╗ ██████╗██████╗ ██╗██████╗ ████████╗
-    ██╔══██╗╚██╗ ██╔╝██╔════╝██╔════╝██╔══██╗██║██╔══██╗╚══██╔══╝
-    ██████╔╝ ╚████╔╝ ███████╗██║     ██████╔╝██║██████╔╝   ██║   
-    ██╔═══╝   ╚██╔╝  ╚════██║██║     ██╔══██╗██║██╔═══╝    ██║   
-    ██║        ██║   ███████║╚██████╗██║  ██║██║██║        ██║   
-    ╚═╝        ╚═╝   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝        ╚═╝   
-    </h1>
-    <h3 style="color: #FFC107; margin-top: -15px;">IQOption Trading Bot with Streamlit UI</h3>
-    </div>
-    """, unsafe_allow_html=True)
 
 # Initialize session state
 if 'api' not in st.session_state:
