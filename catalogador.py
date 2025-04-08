@@ -6,9 +6,10 @@ from tabulate import tabulate
 
 def safe_get_candles(API, par, timeframe, count, end_time):
     """
-    Tenta obter candles utilizando API.get_candles com múltiplas tentativas.
-    Se a mensagem de erro indicar "get_candles need reconnect", recontrói a instância
-    da API usando as credenciais do arquivo de configuração e reconecta.
+    Tenta obter candles utilizando API.get_candles com até 5 tentativas.
+    Se a mensagem de erro indicar "get_candles need reconnect", recria a instância
+    da API utilizando as credenciais do arquivo de configuração e reconecta.
+    Retorna uma tupla (candles, API_atualizada).
     """
     max_attempts = 5
     attempts = 0
@@ -21,18 +22,18 @@ def safe_get_candles(API, par, timeframe, count, end_time):
         try:
             candles = API.get_candles(par, timeframe, count, end_time)
             if candles:
-                return candles
+                return candles, API
         except Exception as e:
             err_msg = str(e)
             print(f"⚠️ Erro get_candles para {par} (tentativa {attempts+1}/{max_attempts}): {err_msg}")
             if "get_candles need reconnect" in err_msg:
                 try:
-                    # Recria a instância e reconecta
-                    API = IQ_Option(email, senha)
-                    conectado, motivo = API.connect()
+                    new_api = IQ_Option(email, senha)
+                    conectado, motivo = new_api.connect()
                     if conectado:
-                        # Escolhe o tipo de conta apropriado; ajuste 'PRACTICE' ou 'REAL' conforme necessário
-                        API.change_balance('PRACTICE')
+                        # Ajuste o tipo de conta conforme necessário (aqui, 'PRACTICE')
+                        new_api.change_balance('PRACTICE')
+                        API = new_api  # atualiza a instância da API usada
                         print(f"🔄 Reconectado com sucesso para {par}.")
                     else:
                         print(f"❌ Falha na reconexão: {motivo}")
@@ -40,7 +41,7 @@ def safe_get_candles(API, par, timeframe, count, end_time):
                     print(f"❌ Erro durante reconexão: {e2}")
         attempts += 1
         time.sleep(3)
-    return candles
+    return candles, API
 
 def obter_pares_abertos(API):
     todos_os_ativos = API.get_all_open_time()
@@ -56,7 +57,7 @@ def obter_pares_abertos(API):
 def analisar_velas(velas, tipo_estrategia):
     resultados = {'doji': 0, 'win': 0, 'loss': 0, 'gale1': 0, 'gale2': 0}
     for i in range(2, len(velas)):
-        # A forma original de extrair os minutos (removendo o primeiro dígito)
+        # Conforme versão original: remove o primeiro dígito dos minutos
         minutos = float(datetime.fromtimestamp(velas[i]['from']).strftime('%M')[1:])
         if tipo_estrategia == 'mhi' and (minutos == 5 or minutos == 0):
             analisar_mhi(velas, i, resultados)
@@ -71,7 +72,7 @@ def analisar_mhi(velas, i, resultados, timeframe=60):
         vela1 = 'Verde' if velas[i-3]['open'] < velas[i-3]['close'] else 'Vermelha'
         vela2 = 'Verde' if velas[i-2]['open'] < velas[i-2]['close'] else 'Vermelha'
         vela3 = 'Verde' if velas[i-1]['open'] < velas[i-1]['close'] else 'Vermelha'
-        # Define direção: se mais de 1 vela for verde, direção é Verde; caso contrário, Vermelha
+        # Define a direção: se mais de uma vela for "Verde", direção é Verde; caso contrário, Vermelha.
         direcao = 'Verde' if [vela1, vela2, vela3].count('Verde') > 1 else 'Vermelha'
         entradas = [
             'Verde' if velas[i+j]['open'] < velas[i+j]['close'] else 'Vermelha'
@@ -119,17 +120,18 @@ def obter_resultados(API, pares):
     qnt_velas_m5 = 146
     estrategias = ['mhi', 'torres', 'mhi_m5']
     resultados = []
-
+    
+    # Para cada estratégia e cada par aberto, tenta obter os candles de forma robusta.
     for estrategia in estrategias:
         for par in pares:
             tentativas = 0
             velas = None
-            # Usa safe_get_candles para robustez na obtenção de candles
+            # Utilize safe_get_candles e atualize a instância da API, se necessário.
             while tentativas < 5 and not velas:
                 if estrategia != 'mhi_m5':
-                    velas = safe_get_candles(API, par, timeframe, qnt_velas, time.time())
+                    velas, API = safe_get_candles(API, par, timeframe, qnt_velas, time.time())
                 else:
-                    velas = safe_get_candles(API, par, timeframe, qnt_velas_m5, time.time())
+                    velas, API = safe_get_candles(API, par, timeframe, qnt_velas_m5, time.time())
                 if not velas:
                     print(f"⚠️ Tentativa {tentativas+1}: falha ao obter velas de {par}. Reconectando em 2 segundos...")
                     try:
@@ -147,17 +149,19 @@ def obter_resultados(API, pares):
                 time.sleep(1)
             else:
                 print(f"❌ Não foi possível obter os dados do ativo {par} após múltiplas tentativas.")
-
     return resultados
 
 def catag(API):
     config = ConfigObj('config.txt')
     pares = obter_pares_abertos(API)
     resultados = obter_resultados(API, pares)
+    
+    # Define a linha de referência para ordenação de acordo com as configurações
     if config['MARTINGALE']['usar_martingale'] == 'S':
         linha = 2 + int(config['MARTINGALE']['niveis_martingale'])
     else:
         linha = 2
+        
     resultados_ordenados = sorted(resultados, key=lambda x: x[linha], reverse=True)
     return resultados_ordenados, linha
 
@@ -170,7 +174,7 @@ if __name__ == "__main__":
     else:
         print(f"❌ Falha ao conectar: {erro}")
         exit()
-    API.change_balance('PRACTICE')
+    API.change_balance('PRACTICE')  # Use 'REAL' se necessário
     catalog, linha = catag(API)
     headers = ["Estratégia", "Par", "Win%", "Gale1%", "Gale2%"]
     print(tabulate(catalog, headers=headers, tablefmt="pretty"))
