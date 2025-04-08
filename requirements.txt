@@ -10,4 +10,4 @@ plotly>=5.14.0
 datetime
 tqdm>=4.65.0
 watchdog>=3.0.0
-matplotlib
+matplotlib==3.10.1
