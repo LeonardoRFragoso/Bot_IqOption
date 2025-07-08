@@ -268,16 +268,26 @@ class IQ_Option:
                     OPEN_TIME[option][name]["open"] = active["enabled"]
 
         # for digital
-        digital_data = self.get_digital_underlying_list_data()["underlying"]
-        for digital in digital_data:
-            name = digital["underlying"]
-            schedule = digital["schedule"]
-            OPEN_TIME["digital"][name]["open"] = False
-            for schedule_time in schedule:
-                start = schedule_time["open"]
-                end = schedule_time["close"]
-                if start < time.time() < end:
-                    OPEN_TIME["digital"][name]["open"] = True
+        digital_data = self.get_digital_underlying_list_data()
+        if digital_data:
+            if isinstance(digital_data, dict):
+                data_list = digital_data.get("underlying") or digital_data.get("underlying_list")
+                if data_list is None:
+                    data_list = []
+            else:
+                data_list = digital_data
+            for digital in data_list:
+                try:
+                    name = digital["underlying"]
+                    schedule = digital["schedule"]
+                except (KeyError, TypeError):
+                    continue
+                OPEN_TIME["digital"][name]["open"] = False
+                for schedule_time in schedule:
+                    start = schedule_time.get("open")
+                    end = schedule_time.get("close")
+                    if start and end and start < time.time() < end:
+                        OPEN_TIME["digital"][name]["open"] = True
 
         # for OTHER
         instrument_list = ["cfd", "forex", "crypto"]
@@ -450,21 +460,38 @@ class IQ_Option:
     # _______________________        CANDLE      _____________________________
     # ________________________self.api.getcandles() wss________________________
 
-    def get_candles(self, ACTIVES, interval, count, endtime):
+    def get_candles(self, ACTIVES, interval, count, endtime, retries=3):
+        """Return candle data for the given asset.
+
+        The original implementation attempted to reconnect indefinitely when an
+        error occurred, which could lead to an infinite loop if the API was
+        unreachable.  This method now limits the number of reconnection attempts
+        and returns ``None`` if it cannot fetch the candles after ``retries``
+        attempts.
+        """
+
         self.api.candles.candles_data = None
-        while True:
+        attempts = 0
+
+        while attempts < retries:
             try:
                 self.api.getcandles(
                     OP_code.ACTIVES[ACTIVES], interval, count, endtime)
-                while self.check_connect and self.api.candles.candles_data == None:
-                    pass
-                if self.api.candles.candles_data != None:
-                    break
-            except:
-                logging.error('**error** get_candles need reconnect')
-                self.connect()
 
-        return self.api.candles.candles_data
+                start_t = time.time()
+                while self.check_connect and self.api.candles.candles_data is None and time.time() - start_t < 10:
+                    pass
+
+                if self.api.candles.candles_data is not None:
+                    return self.api.candles.candles_data
+            except Exception:
+                logging.error('**error** get_candles need reconnect')
+
+            self.connect()
+            attempts += 1
+
+        logging.error('**error** get_candles failed after %s attempts', retries)
+        return None
 
     #######################################################
     # ______________________________________________________
