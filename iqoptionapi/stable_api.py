@@ -268,16 +268,26 @@ class IQ_Option:
                     OPEN_TIME[option][name]["open"] = active["enabled"]
 
         # for digital
-        digital_data = self.get_digital_underlying_list_data()["underlying"]
-        for digital in digital_data:
-            name = digital["underlying"]
-            schedule = digital["schedule"]
-            OPEN_TIME["digital"][name]["open"] = False
-            for schedule_time in schedule:
-                start = schedule_time["open"]
-                end = schedule_time["close"]
-                if start < time.time() < end:
-                    OPEN_TIME["digital"][name]["open"] = True
+        digital_data = self.get_digital_underlying_list_data()
+        if digital_data:
+            if isinstance(digital_data, dict):
+                data_list = digital_data.get("underlying") or digital_data.get("underlying_list")
+                if data_list is None:
+                    data_list = []
+            else:
+                data_list = digital_data
+            for digital in data_list:
+                try:
+                    name = digital["underlying"]
+                    schedule = digital["schedule"]
+                except (KeyError, TypeError):
+                    continue
+                OPEN_TIME["digital"][name]["open"] = False
+                for schedule_time in schedule:
+                    start = schedule_time.get("open")
+                    end = schedule_time.get("close")
+                    if start and end and start < time.time() < end:
+                        OPEN_TIME["digital"][name]["open"] = True
 
         # for OTHER
         instrument_list = ["cfd", "forex", "crypto"]
