@@ -460,21 +460,38 @@ class IQ_Option:
     # _______________________        CANDLE      _____________________________
     # ________________________self.api.getcandles() wss________________________
 
-    def get_candles(self, ACTIVES, interval, count, endtime):
+    def get_candles(self, ACTIVES, interval, count, endtime, retries=3):
+        """Return candle data for the given asset.
+
+        The original implementation attempted to reconnect indefinitely when an
+        error occurred, which could lead to an infinite loop if the API was
+        unreachable.  This method now limits the number of reconnection attempts
+        and returns ``None`` if it cannot fetch the candles after ``retries``
+        attempts.
+        """
+
         self.api.candles.candles_data = None
-        while True:
+        attempts = 0
+
+        while attempts < retries:
             try:
                 self.api.getcandles(
                     OP_code.ACTIVES[ACTIVES], interval, count, endtime)
-                while self.check_connect and self.api.candles.candles_data == None:
-                    pass
-                if self.api.candles.candles_data != None:
-                    break
-            except:
-                logging.error('**error** get_candles need reconnect')
-                self.connect()
 
-        return self.api.candles.candles_data
+                start_t = time.time()
+                while self.check_connect and self.api.candles.candles_data is None and time.time() - start_t < 10:
+                    pass
+
+                if self.api.candles.candles_data is not None:
+                    return self.api.candles.candles_data
+            except Exception:
+                logging.error('**error** get_candles need reconnect')
+
+            self.connect()
+            attempts += 1
+
+        logging.error('**error** get_candles failed after %s attempts', retries)
+        return None
 
     #######################################################
     # ______________________________________________________
