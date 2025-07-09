@@ -112,8 +112,8 @@ def catag(API):
     pares = obter_pares_abertos(API)
     resultados = obter_resultados(API, pares)
 
-    if config['MARTINGALE']['usar_martingale'] == 'S':
-        linha = 2 + int(config['MARTINGALE']['niveis_martingale'])
+    if config['MARTINGALE'].get('usar', 'N').upper() == 'S':
+        linha = 2 + int(config['MARTINGALE'].get('niveis', 1))
     else:
         linha = 2
 
