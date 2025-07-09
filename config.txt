@@ -1,6 +1,9 @@
 [LOGIN]
-email = vaniasayonara@gmail.com
-senha = Marleyj@23
+# Insira suas credenciais de login abaixo. Esta é uma amostra e deve ser
+# substituída por valores reais em um arquivo `config.txt` que não seja
+# versionado.
+email = example@email.com
+senha = sua_senha
 [AJUSTES]
 tipo = automatico
 valor_entrada = 3.0
