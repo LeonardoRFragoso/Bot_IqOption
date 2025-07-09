@@ -5,6 +5,7 @@ from datetime import datetime
 from tabulate import tabulate
 import logging
 from tqdm import tqdm
+from iqoptionapi import constants as OP_code
 
 # ============================
 # CONFIGURAÇÃO DE LOG AJUSTADA
@@ -21,7 +22,8 @@ logger.addHandler(console_handler)
 
 class GetCandlesFilter(logging.Filter):
     def filter(self, record):
-        return "get_candles need reconnect" not in record.getMessage()
+        msg = record.getMessage()
+        return "get_candles need reconnect" not in msg and "get_candles failed" not in msg
 
 logger.addFilter(GetCandlesFilter())
 logging.getLogger("iqoptionapi").addFilter(GetCandlesFilter())
@@ -195,10 +197,14 @@ def obter_pares_abertos(API, tipo_par="Automático (Prioriza OTC)", tipos_permit
         if not pares_disponiveis:
             logger.error(f"Nenhum par disponível para o tipo {tipo_par} nos tipos {tipos_permitidos}")
             return [], f"Nenhum par disponível para o tipo {tipo_par} nos tipos {tipos_permitidos}"
-        
-        print(f"\n📊 Pares selecionados: {', '.join(pares_disponiveis)}")
-        logger.debug(f"Pares selecionados: {', '.join(pares_disponiveis)}")
-        return pares_disponiveis, None
+
+        pares_validos = [p for p in pares_disponiveis if p in OP_code.ACTIVES]
+        if len(pares_validos) < len(pares_disponiveis):
+            invalidos = set(pares_disponiveis) - set(pares_validos)
+            logger.warning("Ignorando pares não suportados: %s", ", ".join(sorted(invalidos)))
+        print(f"\n📊 Pares selecionados: {', '.join(pares_validos)}")
+        logger.debug(f"Pares selecionados: {', '.join(pares_validos)}")
+        return pares_validos, None
         
     except Exception as e:
         logger.error(f"Erro ao obter pares: {str(e)}")
