@@ -3,6 +3,17 @@ import time
 from configobj import ConfigObj
 from datetime import datetime
 from tabulate import tabulate
+import logging
+from iqoptionapi import constants as OP_code
+
+# Filter noisy reconnect messages from the library
+class GetCandlesFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return "get_candles need reconnect" not in msg and "get_candles failed" not in msg
+
+logging.getLogger().addFilter(GetCandlesFilter())
+logging.getLogger("iqoptionapi").addFilter(GetCandlesFilter())
 
 def obter_pares_abertos(API):
     todos_os_ativos = API.get_all_open_time()
@@ -13,7 +24,13 @@ def obter_pares_abertos(API):
     for par in todos_os_ativos['turbo']:
         if todos_os_ativos['turbo'][par]['open'] and par not in pares:
             pares.append(par)
-    return pares
+    pares_validos = [p for p in pares if p in OP_code.ACTIVES]
+    if len(pares_validos) < len(pares):
+        invalidos = set(pares) - set(pares_validos)
+        logging.warning(
+            "Ignorando pares não suportados: %s", ", ".join(sorted(invalidos))
+        )
+    return pares_validos
 
 def analisar_velas(velas, tipo_estrategia):
     resultados = {'doji': 0, 'win': 0, 'loss': 0, 'gale1': 0, 'gale2': 0}
