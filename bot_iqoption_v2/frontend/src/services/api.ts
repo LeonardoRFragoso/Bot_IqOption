@@ -216,6 +216,12 @@ class ApiService {
     return response.data;
   }
 
+  // Market status methods
+  async getMarketStatus(): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.get('/trading/market/status/');
+    return response.data;
+  }
+
   // Utility methods
   isAuthenticated(): boolean {
     return !!localStorage.getItem('access_token');

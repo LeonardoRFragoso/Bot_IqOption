@@ -3,58 +3,72 @@ import {
   AppBar,
   Box,
   CssBaseline,
-  Drawer,
   IconButton,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
   Toolbar,
   Typography,
   Avatar,
   Menu,
   MenuItem,
   Divider,
+  Chip,
+  ListItemIcon,
 } from '@mui/material';
 import {
-  Menu as MenuIcon,
-  Dashboard,
-  Settings,
-  TrendingUp,
-  Assessment,
-  History,
   AccountCircle,
   Logout,
-  PlayArrow,
-  Stop,
+  Settings as SettingsIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
-
-const drawerWidth = 240;
+import { useAuth } from '../../contexts/AuthContext';
+import Sidebar from '../Sidebar/Sidebar';
 
 interface AppLayoutProps {
   children: React.ReactNode;
 }
 
 const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [currentPage, setCurrentPage] = useState('dashboard');
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const menuItems = [
-    { text: 'Dashboard', icon: <Dashboard />, path: '/dashboard' },
-    { text: 'Trading', icon: <TrendingUp />, path: '/trading' },
-    { text: 'Análise', icon: <Assessment />, path: '/analysis' },
-    { text: 'Histórico', icon: <History />, path: '/history' },
-    { text: 'Configurações', icon: <Settings />, path: '/settings' },
-  ];
+  // Mapear rotas para IDs de página
+  const routeToPageMap: { [key: string]: string } = {
+    '/dashboard': 'dashboard',
+    '/trading': 'trading',
+    '/analysis': 'analytics',
+    '/history': 'history',
+    '/settings': 'settings',
+  };
 
-  const handleDrawerToggle = () => {
-    setMobileOpen(!mobileOpen);
+  // Mapear IDs de página para rotas
+  const pageToRouteMap: { [key: string]: string } = {
+    'dashboard': '/dashboard',
+    'trading': '/trading',
+    'analytics': '/analysis',
+    'charts': '/charts',
+    'history': '/history',
+    'account': '/account',
+    'notifications': '/notifications',
+    'settings': '/settings',
+  };
+
+  React.useEffect(() => {
+    const pageId = routeToPageMap[location.pathname] || 'dashboard';
+    setCurrentPage(pageId);
+  }, [location.pathname]);
+
+  const handleSidebarToggle = () => {
+    setSidebarOpen(!sidebarOpen);
+  };
+
+  const handlePageChange = (pageId: string) => {
+    const route = pageToRouteMap[pageId];
+    if (route) {
+      navigate(route);
+    }
   };
 
   const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -71,178 +85,175 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     handleMenuClose();
   };
 
-  const drawer = (
-    <div>
-      <Toolbar>
-        <Typography variant="h6" noWrap component="div" sx={{ color: 'primary.main', fontWeight: 'bold' }}>
-          Bot IQ Option v2
-        </Typography>
-      </Toolbar>
-      <Divider />
-      <List>
-        {menuItems.map((item) => (
-          <ListItem key={item.text} disablePadding>
-            <ListItemButton
-              selected={location.pathname === item.path}
-              onClick={() => navigate(item.path)}
-              sx={{
-                '&.Mui-selected': {
-                  backgroundColor: 'primary.light',
-                  '&:hover': {
-                    backgroundColor: 'primary.light',
-                  },
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: location.pathname === item.path ? 'primary.main' : 'inherit' }}>
-                {item.icon}
-              </ListItemIcon>
-              <ListItemText primary={item.text} />
-            </ListItemButton>
-          </ListItem>
-        ))}
-      </List>
-      <Divider />
-      <List>
-        <ListItem disablePadding>
-          <ListItemButton>
-            <ListItemIcon>
-              <PlayArrow />
-            </ListItemIcon>
-            <ListItemText primary="Iniciar Trading" />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton>
-            <ListItemIcon>
-              <Stop />
-            </ListItemIcon>
-            <ListItemText primary="Parar Trading" />
-          </ListItemButton>
-        </ListItem>
-      </List>
-    </div>
-  );
+  const getPageTitle = () => {
+    const titles: { [key: string]: string } = {
+      'dashboard': 'Dashboard',
+      'trading': 'Trading',
+      'analytics': 'Analytics',
+      'charts': 'Charts',
+      'history': 'History',
+      'account': 'Account',
+      'notifications': 'Notifications',
+      'settings': 'Settings',
+    };
+    return titles[currentPage] || 'Bot IQ Option';
+  };
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <CssBaseline />
-      <AppBar
-        position="fixed"
-        sx={{
-          width: { md: `calc(100% - ${drawerWidth}px)` },
-          ml: { md: `${drawerWidth}px` },
-        }}
-      >
-        <Toolbar>
-          <IconButton
-            color="inherit"
-            aria-label="open drawer"
-            edge="start"
-            onClick={handleDrawerToggle}
-            sx={{ mr: 2, display: { md: 'none' } }}
-          >
-            <MenuIcon />
-          </IconButton>
-          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            {menuItems.find(item => item.path === location.pathname)?.text || 'Bot IQ Option'}
-          </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="body2" sx={{ display: { xs: 'none', sm: 'block' } }}>
-              {user?.first_name || user?.email}
-            </Typography>
-            <IconButton
-              size="large"
-              aria-label="account of current user"
-              aria-controls="menu-appbar"
-              aria-haspopup="true"
-              onClick={handleMenuClick}
-              color="inherit"
-            >
-              <Avatar sx={{ width: 32, height: 32 }}>
-                {user?.first_name?.[0] || user?.email?.[0] || <AccountCircle />}
-              </Avatar>
-            </IconButton>
-            <Menu
-              id="menu-appbar"
-              anchorEl={anchorEl}
-              anchorOrigin={{
-                vertical: 'top',
-                horizontal: 'right',
-              }}
-              keepMounted
-              transformOrigin={{
-                vertical: 'top',
-                horizontal: 'right',
-              }}
-              open={Boolean(anchorEl)}
-              onClose={handleMenuClose}
-            >
-              <MenuItem onClick={() => { navigate('/profile'); handleMenuClose(); }}>
-                <ListItemIcon>
-                  <AccountCircle fontSize="small" />
-                </ListItemIcon>
-                Perfil
-              </MenuItem>
-              <MenuItem onClick={() => { navigate('/settings'); handleMenuClose(); }}>
-                <ListItemIcon>
-                  <Settings fontSize="small" />
-                </ListItemIcon>
-                Configurações
-              </MenuItem>
-              <Divider />
-              <MenuItem onClick={handleLogout}>
-                <ListItemIcon>
-                  <Logout fontSize="small" />
-                </ListItemIcon>
-                Sair
-              </MenuItem>
-            </Menu>
-          </Box>
-        </Toolbar>
-      </AppBar>
-      <Box
-        component="nav"
-        sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}
-        aria-label="mailbox folders"
-      >
-        <Drawer
-          variant="temporary"
-          open={mobileOpen}
-          onClose={handleDrawerToggle}
-          ModalProps={{
-            keepMounted: true,
-          }}
-          sx={{
-            display: { xs: 'block', md: 'none' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
-          }}
-        >
-          {drawer}
-        </Drawer>
-        <Drawer
-          variant="permanent"
-          sx={{
-            display: { xs: 'none', md: 'block' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
-          }}
-          open
-        >
-          {drawer}
-        </Drawer>
-      </Box>
+      
+      {/* Sidebar */}
+      <Sidebar
+        open={sidebarOpen}
+        onToggle={handleSidebarToggle}
+        currentPage={currentPage}
+        onPageChange={handlePageChange}
+      />
+      
+      {/* Main Content */}
       <Box
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
-          width: { md: `calc(100% - ${drawerWidth}px)` },
           minHeight: '100vh',
-          backgroundColor: 'grey.50',
+          background: 'linear-gradient(135deg, #0A0A0A 0%, #1A1A1A 100%)',
+          ml: sidebarOpen ? { xs: 0, md: '280px' } : { xs: 0, md: '72px' },
+          transition: 'margin-left 0.3s ease',
         }}
       >
-        <Toolbar />
-        {children}
+        {/* Top AppBar */}
+        <AppBar
+          position="fixed"
+          elevation={0}
+          sx={{
+            ml: sidebarOpen ? { xs: 0, md: '280px' } : { xs: 0, md: '72px' },
+            width: sidebarOpen 
+              ? { xs: '100%', md: 'calc(100% - 280px)' } 
+              : { xs: '100%', md: 'calc(100% - 72px)' },
+            background: 'linear-gradient(135deg, #1A1A1A 0%, #2A2A2A 100%)',
+            borderBottom: '1px solid #333333',
+            backdropFilter: 'blur(10px)',
+            transition: 'margin-left 0.3s ease, width 0.3s ease',
+            zIndex: 1100,
+          }}
+        >
+          <Toolbar sx={{ minHeight: '70px !important' }}>
+            <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography 
+                variant="h5" 
+                noWrap 
+                component="div" 
+                sx={{ 
+                  fontWeight: 600,
+                  background: 'linear-gradient(135deg, #FFFFFF 0%, #FFD700 100%)',
+                  backgroundClip: 'text',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent'
+                }}
+              >
+                {getPageTitle()}
+              </Typography>
+              
+              <Chip 
+                label="LIVE" 
+                size="small" 
+                sx={{ 
+                  background: 'linear-gradient(135deg, #00E676 0%, #00C853 100%)',
+                  color: '#000000',
+                  fontWeight: 'bold',
+                  animation: 'pulse 2s infinite',
+                  '@keyframes pulse': {
+                    '0%': { opacity: 1 },
+                    '50%': { opacity: 0.7 },
+                    '100%': { opacity: 1 }
+                  }
+                }} 
+              />
+            </Box>
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{ 
+                display: { xs: 'none', sm: 'flex' }, 
+                flexDirection: 'column', 
+                alignItems: 'flex-end' 
+              }}>
+                <Typography variant="body2" sx={{ color: '#FFFFFF', fontWeight: 500 }}>
+                  {user?.first_name || user?.email}
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#B0B0B0' }}>
+                  Trader Premium
+                </Typography>
+              </Box>
+              
+              <IconButton
+                size="large"
+                aria-label="account of current user"
+                aria-controls="menu-appbar"
+                aria-haspopup="true"
+                onClick={handleMenuClick}
+                sx={{
+                  border: '2px solid',
+                  borderColor: 'primary.main',
+                  '&:hover': {
+                    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+                  }
+                }}
+              >
+                <Avatar sx={{ 
+                  width: 36, 
+                  height: 36,
+                  background: 'linear-gradient(135deg, #FFD700 0%, #FFA000 100%)',
+                  color: '#000000',
+                  fontWeight: 'bold'
+                }}>
+                  {user?.first_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
+                </Avatar>
+              </IconButton>
+              
+              <Menu
+                id="menu-appbar"
+                anchorEl={anchorEl}
+                anchorOrigin={{
+                  vertical: 'top',
+                  horizontal: 'right',
+                }}
+                keepMounted
+                transformOrigin={{
+                  vertical: 'top',
+                  horizontal: 'right',
+                }}
+                open={Boolean(anchorEl)}
+                onClose={handleMenuClose}
+              >
+                <MenuItem onClick={() => { navigate('/profile'); handleMenuClose(); }}>
+                  <ListItemIcon>
+                    <AccountCircle fontSize="small" />
+                  </ListItemIcon>
+                  Perfil
+                </MenuItem>
+                <MenuItem onClick={() => { navigate('/settings'); handleMenuClose(); }}>
+                  <ListItemIcon>
+                    <SettingsIcon fontSize="small" />
+                  </ListItemIcon>
+                  Configurações
+                </MenuItem>
+                <Divider />
+                <MenuItem onClick={handleLogout}>
+                  <ListItemIcon>
+                    <Logout fontSize="small" />
+                  </ListItemIcon>
+                  Sair
+                </MenuItem>
+              </Menu>
+            </Box>
+          </Toolbar>
+        </AppBar>
+        
+        {/* Page Content */}
+        <Box sx={{ mt: '70px', p: 3 }}>
+          {children}
+        </Box>
       </Box>
     </Box>
   );

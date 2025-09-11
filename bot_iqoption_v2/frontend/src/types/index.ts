@@ -47,6 +47,7 @@ export interface TradingConfiguration {
 export interface TradingSession {
   id: number;
   user: number;
+  status: 'STOPPED' | 'RUNNING' | 'PAUSED' | 'ERROR';
   strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5';
   account_type: 'PRACTICE' | 'REAL';
   initial_balance: number;
@@ -81,17 +82,14 @@ export interface Operation {
 }
 
 export interface AssetCatalog {
-  id: number;
   asset: string;
   strategy: string;
-  total_operations: number;
-  successful_operations: number;
   win_rate: number;
-  avg_profit: number;
-  last_analysis: string;
-  is_recommended: boolean;
-  created_at: string;
-  updated_at: string;
+  gale1_rate: number;
+  gale2_rate: number;
+  gale3_rate: number;
+  total_samples: number;
+  analyzed_at: string;
 }
 
 export interface TradingLog {

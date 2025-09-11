@@ -1,0 +1,776 @@
+"""
+IQ Option API integration module
+Handles connection and trading operations with IQ Option platform
+"""
+
+import time
+import logging
+import traceback
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Optional, Tuple
+from iqoptionapi.stable_api import IQ_Option
+from django.conf import settings
+from .models import TradingLog, MarketData
+
+logger = logging.getLogger(__name__)
+
+
+class IQOptionAPI:
+    """Wrapper class for IQ Option API with enhanced error handling and reconnection"""
+    
+    def __init__(self, email: str, password: str, user=None):
+        self.email = email
+        self.password = password
+        self.user = user
+        self.api = None
+        self.connected = False
+        self.account_type = 'PRACTICE'
+        self.max_reconnect_attempts = 5
+        
+    def connect(self) -> Tuple[bool, str]:
+        """Connect to IQ Option platform"""
+        try:
+            self.api = IQ_Option(self.email, self.password)
+            check, reason = self.api.connect()
+            
+            if check:
+                self.connected = True
+                self._log_message("Conectado com sucesso à IQ Option", "INFO")
+                return True, "Conectado com sucesso"
+            else:
+                self.connected = False
+                error_msg = self._parse_connection_error(reason)
+                self._log_message(f"Falha na conexão: {error_msg}", "ERROR")
+                return False, error_msg
+                
+        except Exception as e:
+            self.connected = False
+            error_msg = f"Erro na conexão: {str(e)}"
+            self._log_message(error_msg, "ERROR")
+            return False, error_msg
+    
+    def disconnect(self):
+        """Disconnect from IQ Option platform"""
+        if self.api:
+            try:
+                self.api.close()
+                self.connected = False
+                self._log_message("Desconectado da IQ Option", "INFO")
+            except Exception as e:
+                self._log_message(f"Erro ao desconectar: {str(e)}", "WARNING")
+    
+    def change_account(self, account_type: str) -> Tuple[bool, str]:
+        """Change account type (PRACTICE or REAL)"""
+        if not self.connected:
+            return False, "Não conectado à IQ Option"
+        
+        try:
+            self.api.change_balance(account_type)
+            self.account_type = account_type
+            balance = self.get_balance()
+            
+            msg = f"Conta {account_type} selecionada. Saldo: ${balance}"
+            self._log_message(msg, "INFO")
+            return True, msg
+            
+        except Exception as e:
+            error_msg = f"Erro ao trocar conta: {str(e)}"
+            self._log_message(error_msg, "ERROR")
+            return False, error_msg
+    
+    def get_balance(self) -> float:
+        """Get current account balance"""
+        if not self.connected or not self.api:
+            return 0.0
+        
+        try:
+            return float(self.api.get_balance())
+        except Exception as e:
+            self._log_message(f"Erro ao obter saldo: {str(e)}", "ERROR")
+            return 0.0
+    
+    def get_profile(self) -> Optional[Dict]:
+        """Get user profile information"""
+        if not self.connected or not self.api:
+            return None
+        
+        try:
+            return self.api.get_profile_ansyc()
+        except Exception as e:
+            self._log_message(f"Erro ao obter perfil: {str(e)}", "ERROR")
+            return None
+    
+    def get_candles(self, asset: str, timeframe: int, count: int = 100, attempts: int = 3) -> Optional[List[Dict]]:
+        """Get candle data with retry mechanism and auto-reconnection"""
+        if not self.connected or not self.api:
+            return None
+        
+        for attempt in range(attempts):
+            try:
+                candles = self.api.get_candles(asset, timeframe, count, int(time.time()))
+                
+                if candles and isinstance(candles, list) and len(candles) > 0:
+                    # Store candles in database
+                    self._store_candles(asset, timeframe, candles)
+                    return candles
+                else:
+                    self._log_message(f"Tentativa {attempt + 1}: Dados de velas inválidos para {asset}", "WARNING")
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'reconnect' in error_msg or 'socket' in error_msg or 'closed' in error_msg:
+                    self._log_message(f"Erro de conexão detectado: {str(e)}. Tentando reconectar...", "WARNING")
+                    if self._attempt_reconnection():
+                        continue  # Retry with new connection
+                    else:
+                        self._log_message(f"Falha na reconexão para {asset}", "ERROR")
+                        return None
+                else:
+                    self._log_message(f"Tentativa {attempt + 1}: Erro ao obter velas para {asset}: {str(e)}", "WARNING")
+                
+            if attempt < attempts - 1:
+                time.sleep(2)  # Wait before retry
+        
+        self._log_message(f"Falha ao obter velas para {asset} após {attempts} tentativas", "ERROR")
+        return None
+    
+    def get_open_assets(self) -> List[str]:
+        """Get list of currently open assets with fallback to hardcoded list"""
+        if not self.connected or not self.api:
+            return self._get_fallback_assets()
+        
+        try:
+            # Wrap the API call in additional error handling
+            try:
+                all_assets = self.api.get_all_open_time()
+            except Exception as api_error:
+                # Log only for debugging purposes, not as error since fallback works
+                self._log_message(f"API temporariamente indisponível, usando ativos padrão", "INFO")
+                return self._get_fallback_assets()
+            
+            # Verificar se retornou uma lista ao invés de dict (novo erro identificado)
+            if isinstance(all_assets, list):
+                self._log_message("Usando ativos padrão (formato de resposta alternativo)", "INFO")
+                return self._get_fallback_assets()
+            
+            if not all_assets or not isinstance(all_assets, dict):
+                self._log_message("Usando ativos padrão (dados não disponíveis)", "INFO")
+                return self._get_fallback_assets()
+            
+            # Log da estrutura recebida para debug (apenas as chaves principais)
+            try:
+                main_keys = list(all_assets.keys()) if isinstance(all_assets, dict) else []
+                self._log_message(f"Estrutura da API recebida com chaves: {main_keys}", "DEBUG")
+            except Exception:
+                pass
+            
+            assets = []
+            
+            # Tentar extrair ativos de diferentes estruturas possíveis com tratamento robusto
+            for market_type in ['digital', 'turbo', 'binary']:
+                try:
+                    extracted = self._extract_assets_from_structure(all_assets, market_type)
+                    if extracted:
+                        assets.extend(extracted)
+                        self._log_message(f"Extraídos {len(extracted)} ativos de {market_type}", "DEBUG")
+                except Exception as e:
+                    self._log_message(f"Erro ao extrair ativos {market_type}: {str(e)}", "DEBUG")
+                    continue
+            
+            # Remover duplicatas mantendo ordem
+            unique_assets = []
+            for asset in assets:
+                if asset and isinstance(asset, str) and asset not in unique_assets:
+                    unique_assets.append(asset)
+            
+            if unique_assets:
+                self._log_message(f"Encontrados {len(unique_assets)} ativos disponíveis via API", "INFO")
+                return unique_assets
+            else:
+                self._log_message("Usando ativos padrão (nenhum ativo encontrado)", "INFO")
+                return self._get_fallback_assets()
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Log stack trace for debugging
+            stack_trace = traceback.format_exc()
+            self._log_message(f"Stack trace completo: {stack_trace}", "DEBUG")
+            
+            if 'socket' in error_msg or 'closed' in error_msg:
+                self._log_message(f"Erro de conexão ao obter ativos: {str(e)}", "ERROR")
+                if self._attempt_reconnection():
+                    return self.get_open_assets()  # Retry after reconnection
+            else:
+                self._log_message(f"Erro geral ao obter ativos abertos: {str(e)}", "ERROR")
+            return self._get_fallback_assets()
+    
+    def _extract_assets_from_structure(self, all_assets: dict, market_type: str) -> List[str]:
+        """Extract assets from a specific market type structure with bulletproof error handling"""
+        assets = []
+        
+        if not isinstance(all_assets, dict):
+            return assets
+        
+        try:
+            # Verificar se o market_type existe na estrutura
+            if market_type not in all_assets:
+                return assets
+            
+            market_data = all_assets[market_type]
+            
+            # Verificar se market_data é um dict válido
+            if not isinstance(market_data, dict):
+                return assets
+            
+            # Log da estrutura para debug
+            try:
+                market_keys = list(market_data.keys()) if isinstance(market_data, dict) else []
+                self._log_message(f"Chaves encontradas em {market_type}: {market_keys}", "DEBUG")
+            except Exception:
+                pass
+            
+            # Método 1: Estrutura direta - verificar chaves no nível raiz (exceto 'underlying')
+            try:
+                for key in list(market_data.keys()):  # Criar lista para evitar modificação durante iteração
+                    if not isinstance(key, str) or key == 'underlying':
+                        continue
+                    
+                    try:
+                        value = market_data[key]
+                        if self._is_valid_asset(key, value):
+                            assets.append(key)
+                    except (KeyError, TypeError, AttributeError) as e:
+                        self._log_message(f"Erro ao acessar {key} em {market_type}: {str(e)}", "DEBUG")
+                        continue
+                        
+            except Exception as e:
+                self._log_message(f"Erro no método 1 para {market_type}: {str(e)}", "DEBUG")
+            
+            # Método 2: Estrutura com 'underlying' - verificar se existe e é dict
+            try:
+                if 'underlying' in market_data and isinstance(market_data['underlying'], dict):
+                    underlying_data = market_data['underlying']
+                    
+                    for key in list(underlying_data.keys()):
+                        if not isinstance(key, str):
+                            continue
+                        
+                        try:
+                            value = underlying_data[key]
+                            if self._is_valid_asset(key, value):
+                                assets.append(key)
+                        except (KeyError, TypeError, AttributeError) as e:
+                            self._log_message(f"Erro ao acessar underlying.{key} em {market_type}: {str(e)}", "DEBUG")
+                            continue
+                            
+            except Exception as e:
+                self._log_message(f"Erro no método 2 para {market_type}: {str(e)}", "DEBUG")
+            
+            # Método 3: Estrutura aninhada - verificar outros níveis (evitando 'underlying')
+            try:
+                for key in list(market_data.keys()):
+                    if not isinstance(key, str) or key == 'underlying':
+                        continue
+                    
+                    try:
+                        value = market_data[key]
+                        if isinstance(value, dict):
+                            for sub_key in list(value.keys()):
+                                if not isinstance(sub_key, str):
+                                    continue
+                                
+                                try:
+                                    sub_value = value[sub_key]
+                                    if self._is_valid_asset(sub_key, sub_value):
+                                        assets.append(sub_key)
+                                except (KeyError, TypeError, AttributeError) as e:
+                                    self._log_message(f"Erro ao acessar {key}.{sub_key} em {market_type}: {str(e)}", "DEBUG")
+                                    continue
+                                    
+                    except (KeyError, TypeError, AttributeError) as e:
+                        self._log_message(f"Erro ao acessar subnível {key} em {market_type}: {str(e)}", "DEBUG")
+                        continue
+                        
+            except Exception as e:
+                self._log_message(f"Erro no método 3 para {market_type}: {str(e)}", "DEBUG")
+                            
+        except Exception as e:
+            self._log_message(f"Erro geral ao extrair ativos de {market_type}: {str(e)}", "DEBUG")
+        
+        # Remover duplicatas locais
+        unique_assets = []
+        for asset in assets:
+            if asset and isinstance(asset, str) and asset not in unique_assets:
+                unique_assets.append(asset)
+        
+        return unique_assets
+    
+    def _is_valid_asset(self, key: str, value) -> bool:
+        """Check if a key-value pair represents a valid open asset with bulletproof validation"""
+        try:
+            # Verificar se a chave é uma string válida (nome do ativo)
+            if not isinstance(key, str) or len(key) < 3:
+                return False
+            
+            # Filtrar chaves que não são nomes de ativos
+            invalid_keys = ['underlying', 'open', 'close', 'enabled', 'disabled', 'status', 'config', 'settings']
+            if key.lower() in invalid_keys:
+                return False
+            
+            # Verificar se o valor é None ou vazio
+            if value is None:
+                return False
+            
+            # Verificar se o valor é um dicionário com status 'open'
+            if isinstance(value, dict):
+                # Tentar diferentes chaves que podem indicar se o ativo está aberto
+                open_indicators = ['open', 'enabled', 'active', 'available']
+                for indicator in open_indicators:
+                    try:
+                        if indicator in value:
+                            status = value[indicator]
+                            if isinstance(status, bool):
+                                return status
+                            elif isinstance(status, (int, str)):
+                                return str(status).lower() in ['true', '1', 'yes', 'open', 'enabled', 'active']
+                    except (KeyError, TypeError, AttributeError):
+                        continue
+                
+                # Se não encontrou indicadores específicos, assumir que é válido se é um dict não vazio
+                return len(value) > 0
+            
+            # Verificar se o valor é um booleano True (formato simplificado)
+            if isinstance(value, bool):
+                return value
+            
+            # Verificar se o valor é um número (pode indicar payout ou status)
+            if isinstance(value, (int, float)):
+                return value > 0
+            
+            # Verificar se o valor é uma string indicando status
+            if isinstance(value, str):
+                return value.lower() in ['true', '1', 'yes', 'open', 'enabled', 'active']
+                
+            return False
+            
+        except Exception as e:
+            # Log do erro para debug mas não falhar
+            try:
+                logger.debug(f"Erro na validação do ativo {key}: {str(e)}")
+            except:
+                pass
+            return False
+    
+    def _get_fallback_assets(self) -> List[str]:
+        """Return a hardcoded list of common trading assets as fallback"""
+        fallback_assets = [
+            'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD',
+            'EURJPY', 'EURGBP', 'EURAUD', 'GBPJPY', 'AUDJPY', 'CADJPY', 'CHFJPY',
+            'GOLD', 'SILVER', 'OIL', 'BTCUSD', 'ETHUSD'
+        ]
+        
+        self._log_message(f"Usando {len(fallback_assets)} ativos padrão como fallback", "INFO")
+        return fallback_assets
+    
+    def get_best_available_asset(self, preferred_assets: List[str] = None) -> Optional[str]:
+        """Get the best available asset for trading"""
+        if preferred_assets is None:
+            preferred_assets = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD']
+        
+        open_assets = self.get_open_assets()
+        
+        if not open_assets:
+            self._log_message("Nenhum ativo disponível no momento", "WARNING")
+            return None
+        
+        # Tentar encontrar um ativo preferido que esteja aberto
+        for preferred in preferred_assets:
+            if preferred in open_assets:
+                payout = self.get_payout(preferred)
+                total_payout = payout['binary'] + payout['turbo'] + payout['digital']
+                if total_payout > 0:
+                    self._log_message(f"Ativo selecionado: {preferred} (Payouts: Binary: {payout['binary']}%, Turbo: {payout['turbo']}%, Digital: {payout['digital']}%)", "INFO")
+                    return preferred
+        
+        # Se nenhum preferido estiver disponível, pegar o primeiro com payout > 0
+        for asset in open_assets:
+            payout = self.get_payout(asset)
+            total_payout = payout['binary'] + payout['turbo'] + payout['digital']
+            if total_payout > 0:
+                self._log_message(f"Ativo alternativo selecionado: {asset} (Payouts: Binary: {payout['binary']}%, Turbo: {payout['turbo']}%, Digital: {payout['digital']}%)", "INFO")
+                return asset
+        
+        self._log_message(f"Ativos disponíveis sem payout: {', '.join(open_assets[:5])}", "WARNING")
+        return open_assets[0] if open_assets else None
+    
+    def is_market_open(self, asset: str = None) -> bool:
+        """Check if markets are generally open based on time"""
+        now_utc = datetime.now(timezone.utc)
+        
+        # Convert to different market timezones
+        ny_time = now_utc - timedelta(hours=5)  # EST/EDT
+        london_time = now_utc + timedelta(hours=0)  # GMT/BST
+        tokyo_time = now_utc + timedelta(hours=9)  # JST
+        
+        # Check if it's weekend
+        if now_utc.weekday() >= 5:  # Saturday = 5, Sunday = 6
+            # Weekend - only crypto might be available
+            if asset and any(crypto in asset.upper() for crypto in ['BTC', 'ETH', 'LTC', 'XRP']):
+                return True
+            return False
+        
+        # Forex markets (most common)
+        if not asset or any(pair in asset.upper() for pair in ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF']):
+            # Forex is open 24/5, closed from Friday 5PM EST to Sunday 5PM EST
+            if now_utc.weekday() == 4 and ny_time.hour >= 17:  # Friday after 5PM EST
+                return False
+            if now_utc.weekday() == 6 and ny_time.hour < 17:  # Sunday before 5PM EST
+                return False
+            return True
+        
+        # Stock markets
+        if asset and any(stock in asset.upper() for stock in ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN']):
+            # US market hours: 9:30 AM - 4:00 PM EST
+            if 9.5 <= ny_time.hour + ny_time.minute/60 <= 16:
+                return True
+            return False
+        
+        # Commodities (Gold, Oil, etc.)
+        if asset and any(commodity in asset.upper() for commodity in ['GOLD', 'OIL', 'SILVER']):
+            # Generally follow forex hours
+            return True
+        
+        # Default: assume market might be open
+        return True
+    
+    def get_market_status_info(self) -> Dict[str, str]:
+        """Get detailed market status information"""
+        now_utc = datetime.now(timezone.utc)
+        ny_time = now_utc - timedelta(hours=5)
+        london_time = now_utc + timedelta(hours=0)
+        tokyo_time = now_utc + timedelta(hours=9)
+        
+        status = {
+            'current_utc': now_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
+            'new_york': ny_time.strftime('%H:%M EST'),
+            'london': london_time.strftime('%H:%M GMT'),
+            'tokyo': tokyo_time.strftime('%H:%M JST'),
+            'is_weekend': now_utc.weekday() >= 5,
+            'forex_open': self.is_market_open('EURUSD'),
+            'us_stocks_open': self.is_market_open('AAPL'),
+        }
+        
+        return status
+    
+    def get_payout(self, asset: str) -> Dict[str, float]:
+        """Get payout information for an asset"""
+        if not self.connected or not self.api:
+            return {'binary': 0, 'turbo': 0, 'digital': 0}
+        
+        try:
+            profit = self.api.get_all_profit()
+            all_assets = self.api.get_all_open_time()
+            
+            result = {'binary': 0, 'turbo': 0, 'digital': 0}
+            
+            # Verificar se os dados estão disponíveis
+            if not profit or not all_assets:
+                self._log_message(f"Dados de profit ou assets não disponíveis para {asset}", "WARNING")
+                return result
+            
+            # Binary payout
+            try:
+                asset_data = None
+                profit_data = None
+                
+                # Tentar acessar dados binários com verificações robustas
+                if isinstance(all_assets, dict) and 'binary' in all_assets:
+                    binary_data = all_assets['binary']
+                    if isinstance(binary_data, dict):
+                        # Método 1: Acesso direto
+                        if asset in binary_data:
+                            asset_data = binary_data[asset]
+                        # Método 2: Acesso via 'underlying' com verificação segura
+                        elif 'underlying' in binary_data:
+                            try:
+                                underlying = binary_data['underlying']
+                                if isinstance(underlying, dict) and asset in underlying:
+                                    asset_data = underlying[asset]
+                            except (KeyError, TypeError, AttributeError):
+                                pass
+                
+                # Tentar acessar dados de profit com verificações robustas
+                if isinstance(profit, dict) and asset in profit:
+                    try:
+                        asset_profit = profit[asset]
+                        if isinstance(asset_profit, dict) and 'binary' in asset_profit:
+                            profit_data = asset_profit['binary']
+                    except (KeyError, TypeError, AttributeError):
+                        pass
+                
+                if (asset_data and isinstance(asset_data, dict) and 
+                    profit_data and isinstance(profit_data, (int, float)) and
+                    asset_data.get('open', False) and profit_data > 0):
+                    result['binary'] = round(profit_data * 100, 2)
+                    
+            except Exception as e:
+                self._log_message(f"Erro ao obter payout binary para {asset}: {str(e)}", "DEBUG")
+            
+            # Turbo payout
+            try:
+                asset_data = None
+                profit_data = None
+                
+                # Tentar acessar dados turbo com verificações robustas
+                if isinstance(all_assets, dict) and 'turbo' in all_assets:
+                    turbo_data = all_assets['turbo']
+                    if isinstance(turbo_data, dict):
+                        # Método 1: Acesso direto
+                        if asset in turbo_data:
+                            asset_data = turbo_data[asset]
+                        # Método 2: Acesso via 'underlying' com verificação segura
+                        elif 'underlying' in turbo_data:
+                            try:
+                                underlying = turbo_data['underlying']
+                                if isinstance(underlying, dict) and asset in underlying:
+                                    asset_data = underlying[asset]
+                            except (KeyError, TypeError, AttributeError):
+                                pass
+                
+                # Tentar acessar dados de profit com verificações robustas
+                if isinstance(profit, dict) and asset in profit:
+                    try:
+                        asset_profit = profit[asset]
+                        if isinstance(asset_profit, dict) and 'turbo' in asset_profit:
+                            profit_data = asset_profit['turbo']
+                    except (KeyError, TypeError, AttributeError):
+                        pass
+                
+                if (asset_data and isinstance(asset_data, dict) and 
+                    profit_data and isinstance(profit_data, (int, float)) and
+                    asset_data.get('open', False) and profit_data > 0):
+                    result['turbo'] = round(profit_data * 100, 2)
+                    
+            except Exception as e:
+                self._log_message(f"Erro ao obter payout turbo para {asset}: {str(e)}", "DEBUG")
+            
+            # Digital payout
+            try:
+                asset_data = None
+                
+                # Tentar acessar dados digitais com verificações robustas
+                if isinstance(all_assets, dict) and 'digital' in all_assets:
+                    digital_data = all_assets['digital']
+                    if isinstance(digital_data, dict):
+                        # Método 1: Acesso direto
+                        if asset in digital_data:
+                            asset_data = digital_data[asset]
+                        # Método 2: Acesso via 'underlying' com verificação segura
+                        elif 'underlying' in digital_data:
+                            try:
+                                underlying = digital_data['underlying']
+                                if isinstance(underlying, dict) and asset in underlying:
+                                    asset_data = underlying[asset]
+                            except (KeyError, TypeError, AttributeError):
+                                pass
+                
+                if asset_data and isinstance(asset_data, dict) and asset_data.get('open', False):
+                    try:
+                        digital_payout = self.api.get_digital_payout(asset)
+                        if digital_payout and isinstance(digital_payout, (int, float)):
+                            result['digital'] = round(digital_payout, 2)
+                    except Exception as payout_e:
+                        self._log_message(f"Erro ao obter digital payout para {asset}: {str(payout_e)}", "DEBUG")
+                        
+            except Exception as e:
+                self._log_message(f"Erro ao obter payout digital para {asset}: {str(e)}", "DEBUG")
+            
+            return result
+            
+        except Exception as e:
+            self._log_message(f"Erro geral ao obter payout para {asset}: {str(e)}", "ERROR")
+            return {'binary': 0, 'turbo': 0, 'digital': 0}
+    
+    def buy_option(self, asset: str, amount: float, direction: str, expiration: int, option_type: str = 'binary') -> Tuple[bool, Optional[str]]:
+        """Place a buy order"""
+        if not self.connected or not self.api:
+            return False, None
+        
+        try:
+            if option_type == 'digital':
+                success, order_id = self.api.buy_digital_spot_v2(asset, amount, direction.lower(), expiration)
+            else:
+                success, order_id = self.api.buy(amount, asset, direction.lower(), expiration)
+            
+            if success:
+                self._log_message(f"Ordem aberta: {asset} {direction} ${amount}", "INFO")
+                return True, str(order_id)
+            else:
+                self._log_message(f"Falha ao abrir ordem: {asset} {direction} ${amount}", "ERROR")
+                return False, None
+                
+        except Exception as e:
+            self._log_message(f"Erro ao abrir ordem: {str(e)}", "ERROR")
+            return False, None
+    
+    def check_win(self, order_id: str, option_type: str = 'binary') -> Tuple[bool, Optional[float]]:
+        """Check if an order won and return profit/loss"""
+        if not self.connected or not self.api:
+            return False, None
+        
+        try:
+            if option_type == 'digital':
+                status, result = self.api.check_win_digital_v2(order_id)
+            else:
+                result = self.api.check_win_v3(order_id)
+                status = True
+            
+            if status and result is not None:
+                return True, float(result)
+            
+            return False, None
+            
+        except Exception as e:
+            self._log_message(f"Erro ao verificar resultado da ordem {order_id}: {str(e)}", "ERROR")
+            return False, None
+    
+    def get_server_timestamp(self) -> float:
+        """Get server timestamp"""
+        if not self.connected or not self.api:
+            return time.time()
+        
+        try:
+            return self.api.get_server_timestamp()
+        except Exception as e:
+            self._log_message(f"Erro ao obter timestamp do servidor: {str(e)}", "WARNING")
+            return time.time()
+    
+    def _parse_connection_error(self, reason: str) -> str:
+        """Parse connection error and return user-friendly message"""
+        reason_str = str(reason).lower()
+        
+        if "invalid_credentials" in reason_str:
+            return "Email ou senha incorretos"
+        elif "blocked" in reason_str:
+            return "Conta bloqueada pela IQ Option. Entre em contato com o suporte da IQ Option para resolver esta questão."
+        elif "connection" in reason_str:
+            return "Problema de conexão com a IQ Option"
+        elif "suspended" in reason_str:
+            return "Conta suspensa. Verifique seu status na plataforma IQ Option."
+        else:
+            return f"Erro na conexão: {reason}"
+    
+    def _store_candles(self, asset: str, timeframe: int, candles: List[Dict]):
+        """Store candle data in database"""
+        if not self.user:
+            return
+        
+        try:
+            for candle in candles[-10:]:  # Store only last 10 candles to avoid too much data
+                MarketData.objects.update_or_create(
+                    asset=asset,
+                    timeframe=timeframe,
+                    timestamp=datetime.fromtimestamp(candle['from'], tz=timezone.utc),
+                    defaults={
+                        'open_price': candle['open'],
+                        'high_price': candle['max'],
+                        'low_price': candle['min'],
+                        'close_price': candle['close'],
+                        'volume': candle.get('volume', 0)
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Erro ao armazenar velas: {str(e)}")
+    
+    def _attempt_reconnection(self) -> bool:
+        """Attempt to reconnect to IQ Option API"""
+        try:
+            self._log_message("Tentando reconectar à IQ Option...", "INFO")
+            
+            # Close existing connection
+            if self.api:
+                try:
+                    self.api.close()
+                except:
+                    pass
+            
+            # Wait a moment before reconnecting
+            time.sleep(3)
+            
+            # Attempt new connection
+            success, message = self.connect()
+            
+            if success:
+                self._log_message("Reconexão bem-sucedida", "INFO")
+                return True
+            else:
+                self._log_message(f"Falha na reconexão: {message}", "ERROR")
+                return False
+                
+        except Exception as e:
+            self._log_message(f"Erro durante reconexão: {str(e)}", "ERROR")
+            return False
+    
+    def _log_message(self, message: str, level: str = "INFO"):
+        """Log message to database and console"""
+        try:
+            if self.user:
+                TradingLog.objects.create(
+                    user=self.user,
+                    level=level,
+                    message=f"[IQ API] {message}"
+                )
+            
+            # Also log to console
+            if level == "ERROR":
+                logger.error(f"[IQ API] {message}")
+            elif level == "WARNING":
+                logger.warning(f"[IQ API] {message}")
+            else:
+                logger.info(f"[IQ API] {message}")
+                
+        except Exception as e:
+            logger.error(f"Erro ao registrar log: {str(e)}")
+
+
+# Singleton instance manager
+class IQOptionManager:
+    """Manages IQ Option API instances for users"""
+    
+    _instances = {}
+    
+    @classmethod
+    def get_instance(cls, user) -> Optional[IQOptionAPI]:
+        """Get or create IQ Option API instance for user"""
+        user_id = user.id
+        
+        if user_id in cls._instances:
+            return cls._instances[user_id]
+        
+        # Get user credentials
+        email, password = user.get_iq_credentials()
+        if not email or not password:
+            return None
+        
+        # Create new instance
+        instance = IQOptionAPI(email, password, user)
+        cls._instances[user_id] = instance
+        
+        return instance
+    
+    @classmethod
+    def remove_instance(cls, user):
+        """Remove and disconnect instance for user"""
+        user_id = user.id
+        
+        if user_id in cls._instances:
+            instance = cls._instances[user_id]
+            instance.disconnect()
+            del cls._instances[user_id]
+    
+    @classmethod
+    def disconnect_all(cls):
+        """Disconnect all instances"""
+        for instance in cls._instances.values():
+            instance.disconnect()
+        cls._instances.clear()

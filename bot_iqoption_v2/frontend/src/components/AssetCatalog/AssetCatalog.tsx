@@ -37,8 +37,9 @@ const AssetCatalog: React.FC = () => {
     }
   };
 
-  const formatPercentage = (value: number) => {
-    return `${value.toFixed(2)}%`;
+  const formatPercentage = (value: number | string | null | undefined) => {
+    const numValue = typeof value === 'number' ? value : parseFloat(String(value || 0));
+    return isNaN(numValue) ? '0.00%' : `${numValue.toFixed(2)}%`;
   };
 
   const formatCurrency = (value: number) => {
@@ -124,11 +125,10 @@ const AssetCatalog: React.FC = () => {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Ativo</TableCell>
-                <TableCell>Estratégia</TableCell>
-                <TableCell>Operações</TableCell>
-                <TableCell>Taxa de Acerto</TableCell>
-                <TableCell>Lucro Médio</TableCell>
+                <TableCell>Ativo/Estratégia</TableCell>
+                <TableCell>Amostras</TableCell>
+                <TableCell>Taxa de Vitória</TableCell>
+                <TableCell>Taxas Gale</TableCell>
                 <TableCell>Recomendado</TableCell>
                 <TableCell>Última Análise</TableCell>
               </TableRow>
@@ -136,38 +136,32 @@ const AssetCatalog: React.FC = () => {
             <TableBody>
               {!assets || assets.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} align="center">
+                  <TableCell colSpan={6} align="center">
                     <Typography color="textSecondary">
                       Nenhum ativo catalogado. Execute a catalogação para analisar os ativos.
                     </Typography>
                   </TableCell>
                 </TableRow>
               ) : (
-                assets.map((asset: AssetCatalogType) => (
-                  <TableRow key={asset.id} hover>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight="medium">
-                        {asset.asset}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={asset.strategy} 
-                        size="small"
-                        variant="outlined"
-                      />
-                    </TableCell>
+                assets.map((asset, index) => (
+                  <TableRow key={`${asset.asset}-${asset.strategy}-${index}`}>
                     <TableCell>
                       <Box>
-                        <Typography variant="body2">
-                          {asset.successful_operations}/{asset.total_operations}
+                        <Typography variant="body2" fontWeight="medium">
+                          {asset.asset}
                         </Typography>
-                        <LinearProgress 
-                          variant="determinate" 
-                          value={(asset.successful_operations / asset.total_operations) * 100}
-                          sx={{ mt: 0.5, height: 4 }}
-                        />
+                        <Typography variant="caption" color="text.secondary">
+                          {asset.strategy}
+                        </Typography>
                       </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {asset.total_samples} amostras
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Análise completa
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       <Chip 
@@ -177,28 +171,28 @@ const AssetCatalog: React.FC = () => {
                       />
                     </TableCell>
                     <TableCell>
-                      <Typography 
-                        variant="body2"
-                        color={asset.avg_profit >= 0 ? 'success.main' : 'error.main'}
-                        fontWeight="medium"
-                      >
-                        {formatCurrency(asset.avg_profit)}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {getRecommendationIcon(asset.is_recommended, asset.win_rate)}
-                        <Chip 
-                          label={asset.is_recommended ? 'SIM' : 'NÃO'}
-                          color={asset.is_recommended ? 'success' : 'default'}
-                          size="small"
-                          variant="outlined"
-                        />
+                      <Box display="flex" flexDirection="column" gap={0.5}>
+                        <Typography variant="caption" color="text.secondary">
+                          Gale 1: {formatPercentage(asset.gale1_rate)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Gale 2: {formatPercentage(asset.gale2_rate)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Gale 3: {formatPercentage(asset.gale3_rate)}
+                        </Typography>
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" color="textSecondary">
-                        {formatDateTime(asset.last_analysis)}
+                      <Chip
+                        label={asset.gale3_rate >= 70 ? 'Recomendado' : 'Não recomendado'}
+                        color={asset.gale3_rate >= 70 ? 'success' : 'default'}
+                        size="small"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {formatDateTime(asset.analyzed_at)}
                       </Typography>
                     </TableCell>
                   </TableRow>
@@ -212,7 +206,7 @@ const AssetCatalog: React.FC = () => {
           <Box sx={{ mt: 2 }}>
             <Typography variant="body2" color="textSecondary">
               <strong>Total de ativos:</strong> {assets.length} | 
-              <strong> Recomendados:</strong> {assets.filter(a => a.is_recommended).length} |
+              <strong> Recomendados:</strong> {assets.filter(a => a.gale3_rate >= 70).length} |
               <strong> Taxa média:</strong> {formatPercentage(
                 assets.reduce((acc, asset) => acc + asset.win_rate, 0) / assets.length
               )}

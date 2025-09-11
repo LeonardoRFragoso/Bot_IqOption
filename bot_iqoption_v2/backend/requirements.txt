@@ -1,0 +1,26 @@
+Django==4.2.7
+djangorestframework==3.14.0
+djangorestframework-simplejwt==5.3.0
+django-cors-headers==4.3.1
+channels==4.0.0
+channels-redis==4.1.0
+celery==5.3.4
+redis==5.0.1
+cryptography==41.0.7
+requests==2.31.0
+websockets==12.0
+daphne==4.0.0
+python-decouple==3.8
+gunicorn==21.2.0
+
+# IQ Option API (from GitHub)
+# Install with: pip install git+https://github.com/Lu-Yi-Hsun/iqoptionapi.git
+
+# Development dependencies
+pytest==7.4.3
+pytest-django==4.7.0
+black==23.11.0
+flake8==6.1.0
+
+# Note: For production, install PostgreSQL adapter:
+# psycopg2-binary==2.9.9 (requires PostgreSQL and proper build tools)

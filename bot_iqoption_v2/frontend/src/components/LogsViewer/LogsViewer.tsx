@@ -32,7 +32,7 @@ const LogsViewer: React.FC<LogsViewerProps> = ({
   sessionId, 
   maxLogs = 50,
   autoRefresh = true,
-  refreshInterval = 5000
+  refreshInterval = 15000
 }) => {
   const [levelFilter, setLevelFilter] = useState<string>('ALL');
   const { data: logs, loading, error, refetch } = useTradingLogs(sessionId);
