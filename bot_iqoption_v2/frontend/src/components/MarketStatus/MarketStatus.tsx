@@ -44,8 +44,9 @@ const MarketStatus: React.FC = () => {
 
   useEffect(() => {
     loadMarketStatus();
-    const interval = setInterval(loadMarketStatus, 60000); // Update every minute
-    return () => clearInterval(interval);
+    // POLLING DISABLED FOR DEBUGGING
+    // const interval = setInterval(loadMarketStatus, 60000);
+    // return () => clearInterval(interval);
   }, []);
 
   const loadMarketStatus = async () => {

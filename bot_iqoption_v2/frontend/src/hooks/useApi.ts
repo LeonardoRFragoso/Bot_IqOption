@@ -1,13 +1,37 @@
 import { useState, useEffect, useCallback } from 'react';
 import apiService from '../services/api';
 
-// Generic hook for API calls
+// Generic hook for API calls with smart polling
 export function useApi<T>(
-  apiCall: () => Promise<T>
+  apiCall: () => Promise<T>,
+  options?: {
+    autoRefresh?: boolean;
+    refreshInterval?: number;
+    pauseWhenHidden?: boolean;
+  }
 ) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isVisible, setIsVisible] = useState(true);
+
+  const {
+    autoRefresh = false,
+    refreshInterval = 30000,
+    pauseWhenHidden = true
+  } = options || {};
+
+  // Track page visibility to pause polling when tab is not active
+  useEffect(() => {
+    if (!pauseWhenHidden) return;
+
+    const handleVisibilityChange = () => {
+      setIsVisible(!document.hidden);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [pauseWhenHidden]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -25,14 +49,30 @@ export function useApi<T>(
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+  }, []); // Remove fetchData dependency to prevent infinite loop
+
+  // Auto-refresh with smart pausing
+  useEffect(() => {
+    if (!autoRefresh || !isVisible) return;
+
+    const interval = setInterval(fetchData, refreshInterval);
+    return () => clearInterval(interval);
+  }, [autoRefresh, refreshInterval, isVisible, fetchData]);
 
   return { data, loading, error, refetch: fetchData };
 }
 
-// Hook for dashboard data
+// Hook for dashboard data - Smart polling enabled with conservative interval
+const dashboardApiCall = () => apiService.getDashboardData();
 export function useDashboard() {
-  return useApi(() => apiService.getDashboardData());
+  return useApi(
+    dashboardApiCall,
+    { 
+      autoRefresh: true, // RE-ENABLED
+      refreshInterval: 45000, // Increased to 45s for less frequent polling
+      pauseWhenHidden: true 
+    }
+  );
 }
 
 // Hook for trading sessions
@@ -83,9 +123,17 @@ export function useTradingConfig() {
   return { config, loading, error, updateConfig, refetch: fetchConfig };
 }
 
-// Hook for operations
+// Hook for operations - Smart polling enabled with conservative interval
 export function useOperations(sessionId?: number) {
-  return useApi(() => apiService.getOperations(sessionId));
+  const operationsApiCall = useCallback(() => apiService.getOperations(sessionId), [sessionId]);
+  return useApi(
+    operationsApiCall,
+    { 
+      autoRefresh: true, // RE-ENABLED
+      refreshInterval: 60000, // 60s interval for operations
+      pauseWhenHidden: true 
+    }
+  );
 }
 
 // Hook for asset catalog
@@ -105,9 +153,17 @@ export function useAssetCatalog() {
   return { data, loading, error, refetch, runCatalog };
 }
 
-// Hook for trading logs
+// Hook for trading logs - Smart polling enabled with conservative interval
 export function useTradingLogs(sessionId?: number) {
-  return useApi(() => apiService.getTradingLogs(sessionId));
+  const logsApiCall = useCallback(() => apiService.getTradingLogs(sessionId), [sessionId]);
+  return useApi(
+    logsApiCall,
+    { 
+      autoRefresh: true, // RE-ENABLED
+      refreshInterval: 90000, // 90s interval for logs (least frequent)
+      pauseWhenHidden: true 
+    }
+  );
 }
 
 // Hook for connection status

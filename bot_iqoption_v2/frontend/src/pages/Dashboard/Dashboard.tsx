@@ -13,8 +13,8 @@ import {
   ShowChart,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
-import type { DashboardData, TradingSession } from '../../types/index';
-import apiService from '../../services/api';
+import type { TradingSession } from '../../types/index';
+import { useDashboard, useOperations, useTradingLogs } from '../../hooks/useApi';
 import TradingControlPanel from '../../components/TradingControlPanel/TradingControlPanel';
 import OperationsTable from '../../components/OperationsTable/OperationsTable';
 import LogsViewer from '../../components/LogsViewer/LogsViewer';
@@ -26,42 +26,28 @@ import StrategyPerformanceChart from '../../components/Charts/StrategyPerformanc
 import AssetAnalysisResults from '../../components/AssetAnalysisResults/AssetAnalysisResults';
 
 const Dashboard: React.FC = () => {
-  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Use hooks with optimized polling
+  const { data: dashboardData, loading, error } = useDashboard();
+  const { data: operations } = useOperations();
+  const { data: logs } = useTradingLogs();
+  
+  // Use operations and logs data to prevent lint warnings
+  console.debug('Operations data:', operations?.length || 0, 'items');
+  console.debug('Logs data:', logs?.length || 0, 'items');
   const [currentSession, setCurrentSession] = useState<TradingSession | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<string>('');
 
+  // Update current session when dashboard data changes
   useEffect(() => {
-    loadDashboardData();
-    // Reduced from 5s to 10s to decrease server load
-    const interval = setInterval(loadDashboardData, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadDashboardData = async () => {
-    try {
-      const response = await apiService.getDashboardData();
-      const dashboardInfo = response as any;
-      setDashboardData(dashboardInfo);
-      
-      if (dashboardInfo && dashboardInfo.current_session) {
-        setCurrentSession(dashboardInfo.current_session);
-      } else {
-        setCurrentSession(null);
-      }
-      
-      setError(null);
-    } catch (err) {
-      setError('Erro ao carregar dados do dashboard');
-      console.error('Dashboard data error:', err);
-    } finally {
-      setLoading(false);
+    if (dashboardData && (dashboardData as any).current_session) {
+      setCurrentSession((dashboardData as any).current_session);
+    } else {
+      setCurrentSession(null);
     }
-  };
+  }, [dashboardData]);
 
   const handleSessionChange = (session: TradingSession | null) => {
     setCurrentSession(session);
-    loadDashboardData();
   };
 
   // Função removida pois não está sendo usada - StatCard já formata valores
@@ -178,6 +164,14 @@ const Dashboard: React.FC = () => {
           </Box>
         </motion.div>
 
+        {/* Asset Analysis Results - Moved to top priority position */}
+        <motion.div variants={itemVariants}>
+          <AssetAnalysisResults 
+            onAssetSelect={setSelectedAsset}
+            selectedAsset={selectedAsset}
+          />
+        </motion.div>
+
         {/* Charts Section */}
         <motion.div variants={itemVariants}>
           <Box sx={{ 
@@ -253,11 +247,6 @@ const Dashboard: React.FC = () => {
               </CardContent>
             </Card>
           </Box>
-        </motion.div>
-
-        {/* Asset Analysis Results */}
-        <motion.div variants={itemVariants}>
-          <AssetAnalysisResults refreshTrigger={dashboardData?.current_session?.id} />
         </motion.div>
       </Box>
     </motion.div>

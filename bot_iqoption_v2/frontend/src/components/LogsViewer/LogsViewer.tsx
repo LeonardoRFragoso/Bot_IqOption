@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Card,
   CardContent,
@@ -31,18 +31,19 @@ interface LogsViewerProps {
 const LogsViewer: React.FC<LogsViewerProps> = ({ 
   sessionId, 
   maxLogs = 50,
-  autoRefresh = true,
-  refreshInterval = 15000
+  autoRefresh = true
 }) => {
+  // refreshInterval is now handled by the useApi hook internally
   const [levelFilter, setLevelFilter] = useState<string>('ALL');
   const { data: logs, loading, error, refetch } = useTradingLogs(sessionId);
 
-  useEffect(() => {
-    if (autoRefresh) {
-      const interval = setInterval(refetch, refreshInterval);
-      return () => clearInterval(interval);
-    }
-  }, [autoRefresh, refreshInterval, refetch]);
+  // Remove manual polling since useApi now handles it automatically
+  // useEffect(() => {
+  //   if (autoRefresh) {
+  //     const interval = setInterval(refetch, refreshInterval);
+  //     return () => clearInterval(interval);
+  //   }
+  // }, [autoRefresh, refreshInterval, refetch]);
 
   const formatDateTime = (dateString: string) => {
     return new Date(dateString).toLocaleString('pt-BR');

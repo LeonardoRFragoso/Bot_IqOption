@@ -49,19 +49,42 @@ class AssetCatalogService:
                     analysis_result = self._analyze_asset_strategy(asset, strategy)
                     
                     if analysis_result and analysis_result['total_samples'] > 0:
-                        # Save to database
-                        catalog, created = AssetCatalog.objects.update_or_create(
-                            user=self.user,
-                            asset=asset,
-                            strategy=strategy,
-                            defaults={
-                                'win_rate': analysis_result['win_rate'],
-                                'gale1_rate': analysis_result['gale1_rate'],
-                                'gale2_rate': analysis_result['gale2_rate'],
-                                'gale3_rate': analysis_result['gale3_rate'],
-                                'total_samples': analysis_result['total_samples']
-                            }
-                        )
+                        # Save to database with retry mechanism for database locks
+                        max_db_attempts = 3
+                        db_attempt = 0
+                        saved = False
+                        
+                        while db_attempt < max_db_attempts and not saved:
+                            try:
+                                from django.db import transaction
+                                with transaction.atomic():
+                                    catalog, created = AssetCatalog.objects.update_or_create(
+                                        user=self.user,
+                                        asset=asset,
+                                        strategy=strategy,
+                                        defaults={
+                                            'win_rate': analysis_result['win_rate'],
+                                            'gale1_rate': analysis_result['gale1_rate'],
+                                            'gale2_rate': analysis_result['gale2_rate'],
+                                            'gale3_rate': analysis_result['gale3_rate'],
+                                            'total_samples': analysis_result['total_samples']
+                                        }
+                                    )
+                                saved = True
+                            except Exception as db_e:
+                                db_attempt += 1
+                                error_msg = str(db_e).lower()
+                                if 'database is locked' in error_msg or 'locked' in error_msg:
+                                    if db_attempt < max_db_attempts:
+                                        time.sleep(2)  # Increased wait time
+                                        continue
+                                    else:
+                                        # Skip this save if all retries failed
+                                        self._log(f"AVISO: Falha ao salvar {asset}-{strategy} após {max_db_attempts} tentativas", "WARNING")
+                                        saved = True  # Mark as saved to continue
+                                        break
+                                else:
+                                    raise db_e
                         
                         results.append(analysis_result)
                         
@@ -99,7 +122,7 @@ class AssetCatalogService:
         candles = None
         
         while attempts < max_attempts and not candles:
-            candles = self.api.get_candles(asset, timeframe, candles_count, time.time())
+            candles = self.api.get_candles(asset, timeframe, candles_count, int(time.time()))
             
             if not candles:
                 attempts += 1

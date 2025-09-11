@@ -222,15 +222,60 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
     try {
       await apiService.runAssetCatalog(['mhi', 'torres_gemeas', 'mhi_m5']);
       
-      // Wait a moment for analysis to start, then reload data
-      setTimeout(() => {
-        loadAssetsAndStrategies();
-      }, 2000);
+      // Poll for completion instead of fixed timeout
+      await waitForCatalogCompletion();
+      
+      // Reload data after completion
+      await loadAssetsAndStrategies();
       
     } catch (error) {
       console.error('Failed to analyze assets:', error);
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const waitForCatalogCompletion = async () => {
+    const maxWaitTime = 300000; // 5 minutes max
+    const pollInterval = 3000; // Check every 3 seconds
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        // Check if cataloging is still running by looking at recent logs
+        const logs = await apiService.getTradingLogs();
+        
+        // Look for recent catalog completion or error
+        const recentLogs = logs.filter((log: any) => {
+          const logTime = new Date(log.timestamp).getTime();
+          return Date.now() - logTime < 30000; // Last 30 seconds
+        });
+        
+        const hasCompletionLog = recentLogs.some((log: any) => 
+          log.message.includes('[CATALOG]') && 
+          (log.message.includes('Melhor resultado:') || 
+           log.message.includes('Catalogacao finalizada') ||
+           log.message.includes('Nenhum resultado'))
+        );
+        
+        const hasActiveAnalysis = recentLogs.some((log: any) => 
+          log.message.includes('[CATALOG]') && 
+          log.message.includes('Analisando')
+        );
+        
+        if (hasCompletionLog && !hasActiveAnalysis) {
+          // Cataloging completed
+          break;
+        }
+        
+        // Wait before next check
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        
+      } catch (error) {
+        console.warn('Error checking catalog status:', error);
+        // Continue polling even if there's an error
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
     }
   };
 
@@ -394,9 +439,25 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
           </Box>
         </Box>
 
-        {selectedAssetData && selectedStrategyData && (
+        {isAnalyzing && (
           <Alert 
-            severity="info" 
+            severity="warning"
+            sx={{ 
+              mt: 2, 
+              backgroundColor: 'rgba(255, 193, 7, 0.1)',
+              border: '1px solid rgba(255, 193, 7, 0.3)',
+              '& .MuiAlert-message': { color: '#FFFFFF' }
+            }}
+          >
+            <Typography variant="body2">
+              <strong>Catalogação em andamento...</strong> Aguarde a finalização da análise dos ativos para iniciar o trading com dados atualizados.
+            </Typography>
+          </Alert>
+        )}
+
+        {!isAnalyzing && selectedAssetData && selectedStrategyData && (
+          <Alert 
+            severity="info"
             sx={{ 
               mt: 2, 
               backgroundColor: 'rgba(0, 176, 255, 0.1)',
@@ -425,7 +486,7 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
               size="large"
               startIcon={<PlayArrow />}
               onClick={handleStartTrading}
-              disabled={!selectedAsset || !selectedStrategy}
+              disabled={!selectedAsset || !selectedStrategy || isAnalyzing}
               sx={{ 
                 minWidth: 150,
                 background: 'linear-gradient(135deg, #00E676 0%, #00C853 100%)',

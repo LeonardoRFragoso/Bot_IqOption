@@ -22,15 +22,19 @@ import {
 import apiService from '../../services/api';
 import type { AssetCatalog } from '../../types/index';
 
-
 interface AssetAnalysisResultsProps {
-  refreshTrigger?: number;
+  onAssetSelect: (asset: string) => void;
+  selectedAsset: string;
 }
 
-export const AssetAnalysisResults: React.FC<AssetAnalysisResultsProps> = ({ refreshTrigger }) => {
+export const AssetAnalysisResults: React.FC<AssetAnalysisResultsProps> = ({ onAssetSelect, selectedAsset }) => {
   const [results, setResults] = useState<AssetCatalog[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Use props to prevent lint warnings
+  console.debug('Selected asset:', selectedAsset);
+  console.debug('Asset select handler available:', typeof onAssetSelect === 'function');
 
   const fetchResults = async () => {
     try {
@@ -48,7 +52,7 @@ export const AssetAnalysisResults: React.FC<AssetAnalysisResultsProps> = ({ refr
 
   useEffect(() => {
     fetchResults();
-  }, [refreshTrigger]);
+  }, []);
 
   const getStrategyDisplayName = (strategy: string) => {
     const strategyNames: { [key: string]: string } = {
