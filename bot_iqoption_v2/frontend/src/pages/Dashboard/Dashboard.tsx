@@ -14,7 +14,7 @@ import {
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import type { TradingSession } from '../../types/index';
-import { useDashboard, useOperations, useTradingLogs } from '../../hooks/useApi';
+import { useDashboard, useOperations } from '../../hooks/useApi';
 import TradingControlPanel from '../../components/TradingControlPanel/TradingControlPanel';
 import OperationsTable from '../../components/OperationsTable/OperationsTable';
 import LogsViewer from '../../components/LogsViewer/LogsViewer';
@@ -29,11 +29,9 @@ const Dashboard: React.FC = () => {
   // Use hooks with optimized polling
   const { data: dashboardData, loading, error } = useDashboard();
   const { data: operations } = useOperations();
-  const { data: logs } = useTradingLogs();
   
   // Use operations and logs data to prevent lint warnings
   console.debug('Operations data:', operations?.length || 0, 'items');
-  console.debug('Logs data:', logs?.length || 0, 'items');
   const [currentSession, setCurrentSession] = useState<TradingSession | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<string>('');
 

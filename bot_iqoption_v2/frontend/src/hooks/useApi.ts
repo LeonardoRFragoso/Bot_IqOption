@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import apiService from '../services/api';
 
 // Generic hook for API calls with smart polling
@@ -14,6 +14,10 @@ export function useApi<T>(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(true);
+  // Global pause (e.g., while catalog analysis is running) to avoid duplicate polling
+  const [externalPause, setExternalPause] = useState(false);
+  // Track if initial load completed to avoid page flicker on auto-refresh
+  const hasLoadedRef = useRef(false);
 
   const {
     autoRefresh = false,
@@ -33,16 +37,31 @@ export function useApi<T>(
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [pauseWhenHidden]);
 
+  // Listen to global analysis events to pause polling during heavy background tasks
+  useEffect(() => {
+    const handleCatalogRunning = () => setExternalPause(true);
+    const handleCatalogStopped = () => setExternalPause(false);
+    window.addEventListener('catalog-running', handleCatalogRunning);
+    window.addEventListener('catalog-stopped', handleCatalogStopped);
+    return () => {
+      window.removeEventListener('catalog-running', handleCatalogRunning);
+      window.removeEventListener('catalog-stopped', handleCatalogStopped);
+    };
+  }, []);
+
   const fetchData = useCallback(async () => {
     try {
-      setLoading(true);
+      // Only show global loading during the very first load
+      setLoading(!hasLoadedRef.current);
       setError(null);
       const result = await apiCall();
       setData(result);
+      hasLoadedRef.current = true;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Erro na API';
       setError(errorMessage);
     } finally {
+      // Do not force loading=false earlier than necessary; keep it false for subsequent refreshes
       setLoading(false);
     }
   }, [apiCall]);
@@ -53,11 +72,11 @@ export function useApi<T>(
 
   // Auto-refresh with smart pausing
   useEffect(() => {
-    if (!autoRefresh || !isVisible) return;
+    if (!autoRefresh || !isVisible || externalPause) return;
 
     const interval = setInterval(fetchData, refreshInterval);
     return () => clearInterval(interval);
-  }, [autoRefresh, refreshInterval, isVisible, fetchData]);
+  }, [autoRefresh, refreshInterval, isVisible, externalPause, fetchData]);
 
   return { data, loading, error, refetch: fetchData };
 }

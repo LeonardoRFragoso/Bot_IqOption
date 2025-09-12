@@ -61,9 +61,35 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
   // Load real data from API
   useEffect(() => {
     loadAssetsAndStrategies();
+    // Sync with backend session state on mount
+    (async () => {
+      try {
+        const active = await apiService.getActiveSession();
+        if (active) {
+          setCurrentSession(active);
+          const status = (active as any).status as string;
+          if (status === 'RUNNING') {
+            // Safety-first: auto-pause any running session on login/dashboard load
+            try {
+              await apiService.pauseTrading((active as any).id.toString());
+              setTradingStatus('paused');
+            } catch {
+              // If pause fails, still reflect the real status
+              setTradingStatus('running');
+            }
+          } else if (status === 'PAUSED') {
+            setTradingStatus('paused');
+          }
+        } else {
+          setTradingStatus('stopped');
+        }
+      } catch {
+        // ignore
+      }
+    })();
   }, []);
 
-  const loadAssetsAndStrategies = async () => {
+  const loadAssetsAndStrategies = async (lightMode: boolean = false) => {
     try {
       // Load real asset catalog results
       const catalogResults = await apiService.getAssetCatalog();
@@ -77,18 +103,60 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
         winRate: Math.round(result.gale2_rate || result.win_rate || 0) // Use gale2_rate as main indicator
       }));
 
-      // Get market status for additional asset info
-      try {
-        const marketStatus = await apiService.getMarketStatus();
-        if (marketStatus.open_assets) {
-          // Update assets with market status
-          realAssets.forEach(asset => {
-            const marketAsset = marketStatus.open_assets.find((ma: any) => ma === asset.id);
-            asset.isOpen = !!marketAsset;
-          });
+      // Get market status for additional asset info (skip on light mode)
+      if (!lightMode) {
+        try {
+          const marketStatus = await apiService.getMarketStatus();
+          if (Array.isArray(marketStatus.open_assets) && marketStatus.open_assets.length > 0) {
+            // Update assets only when we have a non-empty list from backend
+            realAssets.forEach(asset => {
+              const marketAsset = marketStatus.open_assets.find((ma: any) => ma === asset.id);
+              asset.isOpen = !!marketAsset;
+            });
+          }
+        } catch (error) {
+          console.warn('Could not load market status:', error);
         }
-      } catch (error) {
-        console.warn('Could not load market status:', error);
+      }
+
+      // Fetch live payouts ONLY if already connected (skip on light mode to liberar UI rápido)
+      if (!lightMode) {
+        try {
+          // Check connection status first
+          let isConnected = false;
+          try {
+            const conn: any = await apiService.getConnectionStatus();
+            isConnected = !!(conn && (conn as any).connected);
+          } catch {
+            isConnected = false;
+          }
+
+          if (isConnected) {
+            // Determine preferred account type
+            let accountType = 'PRACTICE';
+            try {
+              const user: any = await apiService.getCurrentUser();
+              accountType = (user && (user as any).preferred_account_type) || 'PRACTICE';
+            } catch {
+              accountType = 'PRACTICE';
+            }
+
+            const payoutList = await apiService.getPayouts(realAssets.map(a => a.id), accountType);
+            const payoutMap = new Map<string, { binary: number; turbo: number; digital: number }>();
+            payoutList.forEach((p: any) => payoutMap.set(p.asset, { binary: p.binary, turbo: p.turbo, digital: p.digital }));
+
+            realAssets.forEach(asset => {
+              const p = payoutMap.get(asset.id);
+              if (p) {
+                const best = Math.max(Number(p.binary) || 0, Number(p.turbo) || 0, Number(p.digital) || 0);
+                if (best > 0) asset.payout = Math.round(best);
+              }
+            });
+          }
+          // If not connected, keep default payouts as-is (no connection attempt)
+        } catch (err) {
+          console.warn('Could not fetch live payouts:', err);
+        }
       }
 
       // Define strategies (these are static)
@@ -120,10 +188,14 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       if (realAssets.length > 0) {
         setAssets(realAssets);
         
-        // Set best performing asset as default
-        const bestAsset = realAssets
+        // Prefer the best open asset; if none, pick the overall best by winRate
+        let bestAsset = realAssets
           .filter(a => a.isOpen)
           .sort((a, b) => (b.winRate || 0) - (a.winRate || 0))[0];
+
+        if (!bestAsset) {
+          bestAsset = [...realAssets].sort((a, b) => (b.winRate || 0) - (a.winRate || 0))[0];
+        }
         
         if (bestAsset) setSelectedAsset(bestAsset.id);
       } else {
@@ -172,13 +244,36 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
     if (!selectedAsset || !selectedStrategy) return;
     
     try {
-      const response = await apiService.startTrading(selectedStrategy);
-      const session = response.data as TradingSession;
+      // Prevent 400 if there is an active session (RUNNING/PAUSED)
+      try {
+        const active = await apiService.getActiveSession();
+        if (active) {
+          alert('Você já possui uma sessão ativa (Rodando ou Pausada). Pare a sessão atual antes de iniciar uma nova.');
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      // Fetch preferred account type and send explicitly
+      let accountType = 'PRACTICE';
+      try {
+        const user: any = await apiService.getCurrentUser();
+        accountType = (user && (user as any).preferred_account_type) || 'PRACTICE';
+      } catch {
+        accountType = 'PRACTICE';
+      }
+
+      const session = await apiService.startTrading(selectedStrategy, selectedAsset, accountType);
       setCurrentSession(session);
       setTradingStatus('running');
       onSessionChange?.(session);
     } catch (error) {
       console.error('Failed to start trading:', error);
+      // Try to show backend message when available
+      const anyErr = error as any;
+      const backendMsg = anyErr?.response?.data?.error || anyErr?.message || '';
+      alert(`Não foi possível iniciar o trading. ${backendMsg ? 'Detalhes: ' + backendMsg : 'Verifique credenciais da IQ Option, conta (Demo/Real) e o ativo selecionado.'}`);
     }
   };
 
@@ -219,63 +314,57 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
 
   const handleAnalyzeAssets = async () => {
     setIsAnalyzing(true);
+    // Broadcast that catalog is running to pause global polling
+    try {
+      window.dispatchEvent(new CustomEvent('catalog-running'));
+    } catch {
+      // ignore
+    }
     try {
       await apiService.runAssetCatalog(['mhi', 'torres_gemeas', 'mhi_m5']);
       
       // Poll for completion instead of fixed timeout
       await waitForCatalogCompletion();
-      
-      // Reload data after completion
-      await loadAssetsAndStrategies();
+
+      // Catalog finished: libera UI imediatamente e faz refresh leve
+      setIsAnalyzing(false);
+      try { window.dispatchEvent(new CustomEvent('catalog-stopped')); } catch {}
+      await loadAssetsAndStrategies(true); // light refresh (sem status/payouts)
+
+      // Agendar refresh completo em background (payouts e status de mercado)
+      setTimeout(() => { loadAssetsAndStrategies(false).catch(() => {}); }, 500);
       
     } catch (error) {
       console.error('Failed to analyze assets:', error);
     } finally {
-      setIsAnalyzing(false);
+      // Se por algum motivo não liberamos acima, garanta a liberação aqui
+      setIsAnalyzing(prev => {
+        if (prev) {
+          try { window.dispatchEvent(new CustomEvent('catalog-stopped')); } catch {}
+        }
+        return false;
+      });
     }
   };
 
   const waitForCatalogCompletion = async () => {
     const maxWaitTime = 300000; // 5 minutes max
-    const pollInterval = 3000; // Check every 3 seconds
-    const startTime = Date.now();
-    
-    while (Date.now() - startTime < maxWaitTime) {
+    const pollInterval = 3000; // 3s for responsive UX
+    const start = Date.now();
+    while (Date.now() - start < maxWaitTime) {
       try {
-        // Check if cataloging is still running by looking at recent logs
-        const logs = await apiService.getTradingLogs();
-        
-        // Look for recent catalog completion or error
-        const recentLogs = logs.filter((log: any) => {
-          const logTime = new Date(log.timestamp).getTime();
-          return Date.now() - logTime < 30000; // Last 30 seconds
-        });
-        
-        const hasCompletionLog = recentLogs.some((log: any) => 
-          log.message.includes('[CATALOG]') && 
-          (log.message.includes('Melhor resultado:') || 
-           log.message.includes('Catalogacao finalizada') ||
-           log.message.includes('Nenhum resultado'))
-        );
-        
-        const hasActiveAnalysis = recentLogs.some((log: any) => 
-          log.message.includes('[CATALOG]') && 
-          log.message.includes('Analisando')
-        );
-        
-        if (hasCompletionLog && !hasActiveAnalysis) {
-          // Cataloging completed
+        const status = await apiService.getCatalogStatus();
+        if (status && status.running === false) {
+          try {
+            window.dispatchEvent(new CustomEvent('catalog-completed'));
+          } catch {}
           break;
         }
-        
-        // Wait before next check
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
-      } catch (error) {
-        console.warn('Error checking catalog status:', error);
-        // Continue polling even if there's an error
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      } catch (e) {
+        console.warn('catalog status check failed:', e);
+        // fall through to wait and retry
       }
+      await new Promise(r => setTimeout(r, pollInterval));
     }
   };
 

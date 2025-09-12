@@ -133,14 +133,29 @@ class ApiService {
     return response.data;
   }
 
+  async getActiveSession(): Promise<TradingSession | null> {
+    const response: AxiosResponse<any> = await this.api.get('/trading/sessions/active/');
+    const data = response.data;
+    // Backend may return the session directly (serialized TradingSession) or wrapped as { session }
+    if (data && typeof data === 'object') {
+      if ('id' in data && ('status' in data || 'strategy' in data)) {
+        return data as TradingSession;
+      }
+      if ('session' in data) {
+        return (data as { session: TradingSession | null }).session ?? null;
+      }
+    }
+    return null;
+  }
+
   async updateTradingSession(id: number, sessionData: Partial<TradingSession>): Promise<TradingSession> {
     const response: AxiosResponse<TradingSession> = await this.api.put(`/trading/sessions/${id}/`, sessionData);
     return response.data;
   }
 
   // Trading Control methods
-  async startTrading(strategy: string, asset: string = 'EURUSD', account_type: string = 'PRACTICE'): Promise<ApiResponse<unknown>> {
-    const response: AxiosResponse<ApiResponse<unknown>> = await this.api.post('/trading/start/', { 
+  async startTrading(strategy: string, asset: string = 'EURUSD', account_type: string = 'PRACTICE'): Promise<TradingSession> {
+    const response: AxiosResponse<TradingSession> = await this.api.post('/trading/start/', { 
       strategy, 
       asset, 
       account_type 
@@ -177,6 +192,12 @@ class ApiService {
 
   async runAssetCatalog(strategies: string[] = ['mhi', 'torres_gemeas', 'mhi_m5']): Promise<ApiResponse<unknown>> {
     const response: AxiosResponse<ApiResponse<unknown>> = await this.api.post('/trading/catalog/', { strategies });
+    return response.data;
+  }
+
+  async getCatalogStatus(): Promise<{ running: boolean; last_started?: string; last_completed?: string }> {
+    const response: AxiosResponse<{ running: boolean; last_started?: string; last_completed?: string }>
+      = await this.api.get('/trading/catalog/status/');
     return response.data;
   }
 
@@ -220,6 +241,14 @@ class ApiService {
   async getMarketStatus(): Promise<any> {
     const response: AxiosResponse<any> = await this.api.get('/trading/market/status/');
     return response.data;
+  }
+
+  // Payouts methods
+  async getPayouts(assets: string[], account_type: string = 'PRACTICE'):
+    Promise<Array<{ asset: string; binary: number; turbo: number; digital: number }>> {
+    const response: AxiosResponse<{ payouts: Array<{ asset: string; binary: number; turbo: number; digital: number }> }> =
+      await this.api.post('/trading/payouts/', { assets, account_type });
+    return response.data.payouts;
   }
 
   // Utility methods

@@ -18,10 +18,50 @@ from .iq_api import IQOptionManager
 from .strategies import get_strategy
 from .catalog import AssetCatalogService
 
+# In-memory catalog status per user to avoid fragile log parsing on the frontend
+# Structure: { user_id: { 'running': bool, 'last_started': datetime, 'last_completed': datetime } }
+catalog_status_map = {}
+
 
 # Global dictionary to store running trading threads
 trading_threads = {}
 
+
+def run_trading_loop(user, session, strategy, api):
+    """Background loop to run a trading strategy for a session.
+    Ensures proper cleanup, logging and API disconnection.
+    """
+    try:
+        strategy.start()
+        strategy.run(session.asset)
+    except Exception as e:
+        session.status = 'ERROR'
+        session.save()
+        TradingLog.objects.create(
+            session=session,
+            user=user,
+            level='ERROR',
+            message=f'Erro na execução da estratégia: {str(e)}'
+        )
+    finally:
+        strategy.stop()
+        if session.status == 'RUNNING':
+            session.status = 'STOPPED'
+            session.stopped_at = timezone.now()
+            session.save()
+        # Remove from active threads
+        if session.id in trading_threads:
+            del trading_threads[session.id]
+        # Disconnect and drop the API instance to avoid lingering sessions
+        try:
+            if api:
+                api.disconnect()
+        except Exception:
+            pass
+        try:
+            IQOptionManager.remove_instance(user)
+        except Exception:
+            pass
 
 class TradingSessionListView(generics.ListAPIView):
     """List user's trading sessions"""
@@ -110,31 +150,7 @@ def start_trading(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    def run_trading():
-        try:
-            strategy.start()
-            strategy.run(session.asset)
-        except Exception as e:
-            session.status = 'ERROR'
-            session.save()
-            TradingLog.objects.create(
-                session=session,
-                user=user,
-                level='ERROR',
-                message=f'Erro na execução da estratégia: {str(e)}'
-            )
-        finally:
-            strategy.stop()
-            if session.status == 'RUNNING':
-                session.status = 'STOPPED'
-                session.stopped_at = timezone.now()
-                session.save()
-            
-            # Remove from active threads
-            if session.id in trading_threads:
-                del trading_threads[session.id]
-    
-    thread = threading.Thread(target=run_trading)
+    thread = threading.Thread(target=run_trading_loop, args=(user, session, strategy, api))
     thread.daemon = True
     thread.start()
     
@@ -225,10 +241,7 @@ def resume_trading(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        thread = threading.Thread(
-            target=run_trading,
-            args=(strategy, session.asset)
-        )
+        thread = threading.Thread(target=run_trading_loop, args=(request.user, session, strategy, api))
         thread.daemon = True
         thread.start()
         
@@ -279,6 +292,11 @@ def stop_trading(request):
     session.status = 'STOPPED'
     session.stopped_at = timezone.now()
     session.save()
+    # Proactively disconnect and remove API instance when user stops trading
+    try:
+        IQOptionManager.remove_instance(request.user)
+    except Exception:
+        pass
     
     return Response({'message': 'Sessão de trading parada com sucesso.'})
 
@@ -287,16 +305,25 @@ def stop_trading(request):
 @permission_classes([permissions.IsAuthenticated])
 def get_active_session(request):
     """Get user's active trading session"""
-    
+    # Cleanup: if there are sessions marked RUNNING but no background thread, stop them
+    try:
+        running_sessions = TradingSession.objects.filter(user=request.user, status='RUNNING')
+        for sess in running_sessions:
+            if sess.id not in trading_threads:
+                sess.status = 'STOPPED'
+                sess.stopped_at = timezone.now()
+                sess.save()
+    except Exception:
+        pass
+
     session = TradingSession.objects.filter(
         user=request.user,
         status__in=['RUNNING', 'PAUSED']
     ).first()
-    
+
     if session:
         return Response(TradingSessionSerializer(session).data)
-    else:
-        return Response({'session': None})
+    return Response({'session': None})
 
 
 @api_view(['POST'])
@@ -334,6 +361,16 @@ def catalog_assets(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
+    # Mark status as running
+    try:
+        catalog_status_map[user.id] = {
+            'running': True,
+            'last_started': timezone.now(),
+            'last_completed': catalog_status_map.get(user.id, {}).get('last_completed')
+        }
+    except Exception:
+        pass
+
     # Run cataloging in background
     def run_cataloging():
         try:
@@ -346,6 +383,26 @@ def catalog_assets(request):
                 level='ERROR',
                 message=f'Erro na catalogação: {str(e)}'
             )
+        finally:
+            # Update catalog status as completed
+            try:
+                catalog_status_map[user.id] = {
+                    'running': False,
+                    'last_started': catalog_status_map.get(user.id, {}).get('last_started'),
+                    'last_completed': timezone.now(),
+                }
+            except Exception:
+                pass
+            # Disconnect from IQ Option to prevent heavy calls during dashboard refresh
+            try:
+                api.disconnect()
+            except Exception:
+                pass
+            # Ensure manager drops the instance so subsequent endpoints see disconnected state
+            try:
+                IQOptionManager.remove_instance(user)
+            except Exception:
+                pass
     
     thread = threading.Thread(target=run_cataloging)
     thread.daemon = True
@@ -363,6 +420,31 @@ def get_catalog_results(request):
     serializer = AssetCatalogSerializer(catalogs, many=True)
     
     return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def catalog_status(request):
+    """Return current catalog status for the authenticated user.
+    Response: { running: bool, last_started?: iso, last_completed?: iso }
+    """
+    user = request.user
+    state = catalog_status_map.get(user.id, {})
+
+    # Fallback last_completed based on database if not present in memory
+    last_completed = state.get('last_completed')
+    if not last_completed:
+        try:
+            last = AssetCatalog.objects.filter(user=user).order_by('-analyzed_at').values_list('analyzed_at', flat=True).first()
+            last_completed = last
+        except Exception:
+            last_completed = None
+
+    return Response({
+        'running': bool(state.get('running', False)),
+        'last_started': state.get('last_started'),
+        'last_completed': last_completed,
+    })
 
 
 class OperationListView(generics.ListAPIView):
@@ -539,22 +621,45 @@ def market_status(request):
     """Get current market status and trading hours information"""
     try:
         api = IQOptionManager.get_instance(request.user)
-        
-        if not api:
-            return Response(
-                {'error': 'Credenciais da IQ Option não configuradas'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get market status info
-        market_info = api.get_market_status_info()
-        
-        # Get available assets
+
+        # Always provide time-based market_info; avoid contacting platform unless connected
+        if api:
+            market_info = api.get_market_status_info()
+        else:
+            # Fallback time info if API instance is unavailable
+            from datetime import datetime, timezone, timedelta
+            now_utc = datetime.now(timezone.utc)
+            ny_time = now_utc - timedelta(hours=5)
+            london_time = now_utc + timedelta(hours=0)
+            tokyo_time = now_utc + timedelta(hours=9)
+            market_info = {
+                'current_utc': now_utc.strftime('%Y-%m-%d %H:%M:%S UTC'),
+                'new_york': ny_time.strftime('%H:%M EST'),
+                'london': london_time.strftime('%H:%M GMT'),
+                'tokyo': tokyo_time.strftime('%H:%M JST'),
+                'is_weekend': now_utc.weekday() >= 5,
+                'forex_open': True,
+                'us_stocks_open': False,
+            }
+
+        # If not connected, DO NOT query open assets or best asset to avoid any platform interaction
+        if not api or not api.connected:
+            return Response({
+                'market_info': market_info,
+                'open_assets_count': 0,
+                'open_assets': [],
+                'best_asset': None,
+                'recommendations': {
+                    'forex_trading': market_info.get('forex_open', False),
+                    'stock_trading': market_info.get('us_stocks_open', False),
+                    'weekend_mode': market_info.get('is_weekend', False)
+                }
+            })
+
+        # Connected: safe to query live info
         open_assets = api.get_open_assets()
-        
-        # Get best available asset
         best_asset = api.get_best_available_asset()
-        
+
         return Response({
             'market_info': market_info,
             'open_assets_count': len(open_assets),
@@ -572,3 +677,49 @@ def market_status(request):
             {'error': f'Erro ao obter status do mercado: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def get_payouts(request):
+    """Return payouts for a given list of assets.
+    Body: { assets: ["EURUSD", ...], account_type?: "PRACTICE"|"REAL" }
+    """
+    try:
+        data = request.data or {}
+        assets = data.get('assets') or []
+        if not isinstance(assets, list) or not assets:
+            return Response({'error': 'Informe a lista de ativos em "assets".'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Limit the number of assets to avoid heavy calls
+        assets = [str(a).upper() for a in assets][:50]
+
+        account_type = data.get('account_type') or 'PRACTICE'
+
+        api = IQOptionManager.get_instance(request.user)
+        if not api:
+            return Response({'error': 'Credenciais da IQ Option não configuradas.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # IMPORTANT: Do NOT establish a new connection here.
+        # If not connected, return fallback payouts to avoid implicit login/connect on dashboard load.
+        if not api.connected:
+            payouts = [{'asset': a, 'binary': 80, 'turbo': 80, 'digital': 80} for a in assets]
+            return Response({'payouts': payouts, 'count': len(payouts), 'connected': False})
+
+        # When already connected, ensure account type and fetch live payouts
+        ok, msg = api.change_account(account_type)
+        if not ok:
+            return Response({'error': f'Falha ao trocar conta: {msg}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        payouts = []
+        for a in assets:
+            try:
+                p = api.get_payout(a)
+                payouts.append({'asset': a, **p})
+            except Exception as e:
+                payouts.append({'asset': a, 'binary': 80, 'turbo': 80, 'digital': 80, 'error': str(e)})
+
+        return Response({'payouts': payouts, 'count': len(payouts), 'connected': True})
+
+    except Exception as e:
+        return Response({'error': f'Erro ao obter payouts: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

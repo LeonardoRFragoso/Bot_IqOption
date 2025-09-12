@@ -52,6 +52,21 @@ export const AssetAnalysisResults: React.FC<AssetAnalysisResultsProps> = ({ onAs
 
   useEffect(() => {
     fetchResults();
+    // Light retry a few seconds later in case backend is still flushing writes
+    const retryTimer = setTimeout(() => {
+      fetchResults();
+    }, 4000);
+
+    // Listen for catalog completion broadcast to refresh results
+    const onCatalogCompleted = () => {
+      fetchResults();
+    };
+    window.addEventListener('catalog-completed', onCatalogCompleted);
+
+    return () => {
+      clearTimeout(retryTimer);
+      window.removeEventListener('catalog-completed', onCatalogCompleted);
+    };
   }, []);
 
   const getStrategyDisplayName = (strategy: string) => {

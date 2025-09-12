@@ -88,31 +88,82 @@ class BaseStrategy:
                 self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
                 alt_payouts = self.api.get_payout(alternative_asset)
                 
-                if alt_payouts['digital'] > 0 and alt_payouts['digital'] >= alt_payouts['turbo'] and alt_payouts['digital'] >= alt_payouts['binary']:
-                    self._log("Operações serão realizadas nas digitais", "INFO")
-                    return 'digital', alternative_asset
-                elif alt_payouts['turbo'] > 0 and alt_payouts['turbo'] >= alt_payouts['binary']:
-                    self._log("Operações serão realizadas nas turbo", "INFO")
-                    return 'turbo', alternative_asset
-                elif alt_payouts['binary'] > 0:
-                    self._log("Operações serão realizadas nas binárias", "INFO")
-                    return 'binary', alternative_asset
+                # Prefer open instruments with highest payout
+                alt_open = {
+                    'digital': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'digital'),
+                    'turbo': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'turbo'),
+                    'binary': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'binary'),
+                }
+                ordered = sorted([
+                    ('digital', alt_payouts['digital'], alt_open['digital']),
+                    ('turbo', alt_payouts['turbo'], alt_open['turbo']),
+                    ('binary', alt_payouts['binary'], alt_open['binary'])
+                ], key=lambda x: x[1], reverse=True)
+                for t, p, is_open in ordered:
+                    if p > 0 and is_open:
+                        self._log(f"Operações serão realizadas nas {t}", "INFO")
+                        return t, alternative_asset
             
             self._log("Nenhum ativo disponível no momento", "ERROR")
             return None, None
         
-        if payouts['digital'] > 0 and payouts['digital'] >= payouts['turbo'] and payouts['digital'] >= payouts['binary']:
-            self._log("Operações serão realizadas nas digitais", "INFO")
-            return 'digital', asset
-        elif payouts['turbo'] > 0 and payouts['turbo'] >= payouts['binary']:
-            self._log("Operações serão realizadas nas turbo", "INFO")
-            return 'turbo', asset
-        elif payouts['binary'] > 0:
-            self._log("Operações serão realizadas nas binárias", "INFO")
-            return 'binary', asset
-        else:
-            self._log("Par fechado, escolha outro", "ERROR")
-            return None, None
+        # Prefer open instruments with highest payout for the requested asset
+        open_types = {
+            'digital': getattr(self.api, 'is_asset_open', lambda a, t: True)(asset, 'digital'),
+            'turbo': getattr(self.api, 'is_asset_open', lambda a, t: True)(asset, 'turbo'),
+            'binary': getattr(self.api, 'is_asset_open', lambda a, t: True)(asset, 'binary'),
+        }
+        ordered = sorted([
+            ('digital', payouts['digital'], open_types['digital']),
+            ('turbo', payouts['turbo'], open_types['turbo']),
+            ('binary', payouts['binary'], open_types['binary'])
+        ], key=lambda x: x[1], reverse=True)
+        for t, p, is_open in ordered:
+            if p > 0:
+                # If the intended instrument is not open for the base asset, try OTC variant
+                if not is_open:
+                    otc_asset = f"{asset}-OTC"
+                    try:
+                        if self.api.is_asset_open(otc_asset, t):
+                            self._log(f"{t.capitalize()} fechado em {asset}, mudando para {otc_asset}", "WARNING")
+                            return t, otc_asset
+                    except Exception:
+                        pass
+                if is_open:
+                    self._log(f"Operações serão realizadas nas {t}", "INFO")
+                    return t, asset
+        
+        # If none of the instruments are open for this asset, try alternative asset
+        alternative_asset = self.api.get_best_available_asset()
+        if alternative_asset:
+            alt_payouts = self.api.get_payout(alternative_asset)
+            alt_open = {
+                'digital': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'digital'),
+                'turbo': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'turbo'),
+                'binary': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'binary'),
+            }
+            ordered = sorted([
+                ('digital', alt_payouts['digital'], alt_open['digital']),
+                ('turbo', alt_payouts['turbo'], alt_open['turbo']),
+                ('binary', alt_payouts['binary'], alt_open['binary'])
+            ], key=lambda x: x[1], reverse=True)
+            for t, p, is_open in ordered:
+                if p > 0:
+                    if not is_open:
+                        otc_alt = f"{alternative_asset}-OTC"
+                        try:
+                            if self.api.is_asset_open(otc_alt, t):
+                                self._log(f"{t.capitalize()} fechado em {alternative_asset}, mudando para {otc_alt}", "WARNING")
+                                return t, otc_alt
+                        except Exception:
+                            pass
+                    if is_open:
+                        self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
+                        self._log(f"Operações serão realizadas nas {t}", "INFO")
+                        return t, alternative_asset
+        
+        self._log("Par fechado, escolha outro", "ERROR")
+        return None, None
     
     def _find_best_open_asset(self) -> Optional[str]:
         """Find the best open asset with highest payout"""
@@ -169,10 +220,16 @@ class BaseStrategy:
         for gale_level in range(martingale_levels + 1):
             if not self.running or not self._check_stop_conditions():
                 return False
-                
+            
             # Apply martingale multiplier
             if gale_level > 0:
                 entry_value = round(entry_value * float(self.config.martingale_fator), 2)
+            
+            # Diagnostic log before attempting to buy
+            self._log(
+                f"Preparando ordem | Par: {asset} | Tipo: {operation_type} | Direção: {direction.upper()} | Expiração: {expiration}m | Valor: ${entry_value}",
+                "INFO"
+            )
             
             # Place order
             success, order_id = self.api.buy_option(
@@ -183,7 +240,11 @@ class BaseStrategy:
                 option_type=operation_type
             )
             
-            if not success:
+            # Diagnostic: log immediate result from API
+            if success:
+                self._log(f"buy_option retornou sucesso | order_id={order_id}", "INFO")
+            else:
+                self._log(f"buy_option falhou imediatamente | order_id={order_id}", "ERROR")
                 self._log(f"Erro ao abrir ordem no ativo {asset}", "ERROR")
                 continue
             
@@ -330,7 +391,7 @@ class MHIStrategy(BaseStrategy):
                 
                 # Get server time
                 server_time = self.api.get_server_timestamp()
-                minutes = float(datetime.fromtimestamp(server_time, tz=timezone.utc).strftime('%M.%S')[1:])
+                minutes = float(datetime.fromtimestamp(server_time, tz=timezone.utc).strftime('%M.%S'))
                 
                 # Check entry time (M5 and M0)
                 entry_time = (minutes >= 4.59 and minutes <= 5.00) or minutes >= 9.59
@@ -355,11 +416,11 @@ class MHIStrategy(BaseStrategy):
         
         # Get moving averages if configured
         if self.config.analise_medias:
-            candles = self.api.get_candles(asset, timeframe, self.config.velas_medias, time.time())
+            candles = self.api.get_candles(asset, timeframe, self.config.velas_medias)
             if candles:
                 trend = self._analyze_moving_averages(candles, self.config.velas_medias)
         else:
-            candles = self.api.get_candles(asset, timeframe, candles_count, time.time())
+            candles = self.api.get_candles(asset, timeframe, candles_count)
             trend = None
         
         if not candles or len(candles) < 3:
@@ -392,7 +453,7 @@ class MHIStrategy(BaseStrategy):
                 return None
             
             # Check against trend if configured
-            if self.config.analyze_moving_averages and trend:
+            if self.config.analise_medias and trend:
                 if direction != trend:
                     self._log(f"Velas: {vela1}, {vela2}, {vela3}", "WARNING")
                     self._log("Entrada abortada - Contra Tendência.", "WARNING")
@@ -413,9 +474,12 @@ class TorresGemeasStrategy(BaseStrategy):
         """Execute Torres Gêmeas strategy"""
         self._log(f"Iniciando estratégia Torres Gêmeas para {asset}", "INFO")
         
-        operation_type = self._determine_operation_type(asset)
-        if not operation_type:
+        operation_type, current_asset = self._determine_operation_type(asset)
+        if not operation_type or not current_asset:
             return
+        
+        if current_asset != asset:
+            asset = current_asset
         
         while self.running and self._check_stop_conditions():
             try:
@@ -446,11 +510,11 @@ class TorresGemeasStrategy(BaseStrategy):
         
         # Get moving averages if configured
         if self.config.analise_medias:
-            candles = self.api.get_candles(asset, timeframe, self.config.velas_medias, time.time())
+            candles = self.api.get_candles(asset, timeframe, self.config.velas_medias)
             if candles:
                 trend = self._analyze_moving_averages(candles, self.config.velas_medias)
         else:
-            candles = self.api.get_candles(asset, timeframe, candles_count, time.time())
+            candles = self.api.get_candles(asset, timeframe, candles_count)
             trend = None
         
         if not candles or len(candles) < 4:
@@ -471,7 +535,7 @@ class TorresGemeasStrategy(BaseStrategy):
             direction = 'call' if vela4 == 'Verde' else 'put'
             
             # Check against trend if configured
-            if self.config.analyze_moving_averages and trend:
+            if self.config.analise_medias and trend:
                 if direction != trend:
                     self._log(f"Vela de análise: {vela4}", "WARNING")
                     self._log("Entrada abortada - Contra Tendência.", "WARNING")
@@ -492,9 +556,11 @@ class MHIM5Strategy(BaseStrategy):
         """Execute MHI M5 strategy"""
         self._log(f"Iniciando estratégia MHI M5 para {asset}", "INFO")
         
-        operation_type = self._determine_operation_type(asset)
-        if not operation_type:
+        operation_type, current_asset = self._determine_operation_type(asset)
+        if not operation_type or not current_asset:
             return
+        if current_asset != asset:
+            asset = current_asset
         
         while self.running and self._check_stop_conditions():
             try:
@@ -525,11 +591,11 @@ class MHIM5Strategy(BaseStrategy):
         
         # Get moving averages if configured
         if self.config.analise_medias:
-            candles = self.api.get_candles(asset, timeframe, self.config.velas_medias, time.time())
+            candles = self.api.get_candles(asset, timeframe, self.config.velas_medias)
             if candles:
                 trend = self._analyze_moving_averages(candles, self.config.velas_medias)
         else:
-            candles = self.api.get_candles(asset, timeframe, candles_count, time.time())
+            candles = self.api.get_candles(asset, timeframe, candles_count)
             trend = None
         
         if not candles or len(candles) < 3:
@@ -562,7 +628,7 @@ class MHIM5Strategy(BaseStrategy):
                 return None
             
             # Check against trend if configured
-            if self.config.analyze_moving_averages and trend:
+            if self.config.analise_medias and trend:
                 if direction != trend:
                     self._log(f"Velas: {vela1}, {vela2}, {vela3}", "WARNING")
                     self._log("Entrada abortada - Contra Tendência.", "WARNING")

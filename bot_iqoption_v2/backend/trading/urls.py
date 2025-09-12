@@ -16,6 +16,7 @@ urlpatterns = [
     # Asset cataloging
     path('catalog/', views.catalog_assets, name='catalog_assets'),
     path('catalog/results/', views.get_catalog_results, name='catalog_results'),
+    path('catalog/status/', views.catalog_status, name='catalog_status'),
     
     # Operations
     path('operations/', views.OperationListView.as_view(), name='trading_operations'),
@@ -27,6 +28,9 @@ urlpatterns = [
     # Connection
     path('connection/status/', views.get_connection_status, name='connection_status'),
     path('connection/test/', views.test_connection, name='test_connection'),
+    
+    # Payouts
+    path('payouts/', views.get_payouts, name='get_payouts'),
     
     # Market status
     path('market/status/', views.market_status, name='market_status'),
