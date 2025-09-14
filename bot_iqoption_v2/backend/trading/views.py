@@ -27,6 +27,19 @@ catalog_status_map = {}
 # Global dictionary to store running trading threads
 trading_threads = {}
 
+# In-memory guard to prevent duplicate session starts per user
+_start_guard_mutex = threading.RLock()
+_user_start_locks = {}
+
+def _get_user_start_lock(user_id):
+    """Return a per-user start lock, creating it if necessary in a thread-safe way."""
+    with _start_guard_mutex:
+        lock = _user_start_locks.get(user_id)
+        if lock is None:
+            lock = threading.RLock()
+            _user_start_locks[user_id] = lock
+        return lock
+
 
 def run_trading_loop(user, session, strategy, api):
     """Background loop to run a trading strategy for a session.
@@ -95,76 +108,90 @@ def start_trading(request):
     serializer.is_valid(raise_exception=True)
     
     user = request.user
-    
-    # Check if user already has an active session
-    active_session = TradingSession.objects.filter(
-        user=user,
-        status__in=['RUNNING', 'PAUSED']
-    ).first()
-    
-    if active_session:
+
+    # Acquire per-user start lock to prevent duplicate starts under concurrent requests
+    user_lock = _get_user_start_lock(user.id)
+    acquired = user_lock.acquire(timeout=5)
+    if not acquired:
         return Response(
-            {'error': 'Você já possui uma sessão ativa. Pare a sessão atual antes de iniciar uma nova.'},
-            status=status.HTTP_400_BAD_REQUEST
+            {'error': 'Outra inicialização de sessão está em andamento. Tente novamente em alguns segundos.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS
         )
-    
-    # Get IQ Option API instance
-    api = IQOptionManager.get_instance(user)
-    if not api:
-        return Response(
-            {'error': 'Credenciais da IQ Option não configuradas.'},
-            status=status.HTTP_400_BAD_REQUEST
+    try:
+        # Check if user already has an active session (guarded by lock)
+        active_session = TradingSession.objects.filter(
+            user=user,
+            status__in=['RUNNING', 'PAUSED']
+        ).first()
+        
+        if active_session:
+            return Response(
+                {'error': 'Você já possui uma sessão ativa. Pare a sessão atual antes de iniciar uma nova.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get IQ Option API instance
+        api = IQOptionManager.get_instance(user)
+        if not api:
+            return Response(
+                {'error': 'Credenciais da IQ Option não configuradas.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Connect to IQ Option
+        success, message = api.connect()
+        if not success:
+            return Response(
+                {'error': f'Falha na conexão com IQ Option: {message}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Change account type
+        account_type = serializer.validated_data['account_type']
+        success, message = api.change_account(account_type)
+        if not success:
+            return Response(
+                {'error': f'Falha ao trocar conta: {message}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create trading session
+        session = TradingSession.objects.create(
+            user=user,
+            strategy=serializer.validated_data['strategy'],
+            asset=serializer.validated_data['asset'],
+            account_type=account_type,
+            initial_balance=api.get_balance(),
+            current_balance=api.get_balance(),
+            status='RUNNING'
         )
-    
-    # Connect to IQ Option
-    success, message = api.connect()
-    if not success:
-        return Response(
-            {'error': f'Falha na conexão com IQ Option: {message}'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    # Change account type
-    account_type = serializer.validated_data['account_type']
-    success, message = api.change_account(account_type)
-    if not success:
-        return Response(
-            {'error': f'Falha ao trocar conta: {message}'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    # Create trading session
-    session = TradingSession.objects.create(
-        user=user,
-        strategy=serializer.validated_data['strategy'],
-        asset=serializer.validated_data['asset'],
-        account_type=account_type,
-        initial_balance=api.get_balance(),
-        current_balance=api.get_balance(),
-        status='RUNNING'
-    )
-    
-    # Start trading in background thread
-    strategy = get_strategy(session.strategy, api, session)
-    if not strategy:
-        session.delete()
-        return Response(
-            {'error': 'Estratégia não encontrada.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    thread = threading.Thread(target=run_trading_loop, args=(user, session, strategy, api))
-    thread.daemon = True
-    thread.start()
-    
-    # Store thread reference
-    trading_threads[session.id] = {
-        'thread': thread,
-        'strategy': strategy,
-        'api': api
-    }
-    
-    return Response(TradingSessionSerializer(session).data, status=status.HTTP_201_CREATED)
+        
+        # Start trading in background thread
+        strategy = get_strategy(session.strategy, api, session)
+        if not strategy:
+            session.delete()
+            return Response(
+                {'error': 'Estratégia não encontrada.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        thread = threading.Thread(target=run_trading_loop, args=(user, session, strategy, api))
+        thread.daemon = True
+        thread.start()
+        
+        # Store thread reference
+        trading_threads[session.id] = {
+            'thread': thread,
+            'strategy': strategy,
+            'api': api
+        }
+        
+        return Response(TradingSessionSerializer(session).data, status=status.HTTP_201_CREATED)
+    finally:
+        try:
+            user_lock.release()
+        except Exception:
+            pass
 
 
 @api_view(['POST'])
