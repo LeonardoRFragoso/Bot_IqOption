@@ -1046,7 +1046,7 @@ class IQOptionAPI:
                         try:
                             start_q = time.time()
                             # Janela de pré-aquecimento ultracurta para entradas M1 on-time
-                            preheat_budget = 0.12 if int(expiration) == 1 else 0.3
+                            preheat_budget = 0.25 if int(expiration) == 1 else 0.3
                             while time.time() - start_q < preheat_budget:
                                 try:
                                     table = getattr(self.api.api, 'instrument_quites_generated_data', {})

@@ -915,6 +915,26 @@ class TorresGemeasStrategy(BaseStrategy):
                         self._last_asset_check_torres = time.time()
                 else:
                     self._last_asset_check_torres = time.time()
+                # Payout cache warm-up (executed sparingly to avoid heavy vendor calls in the gate)
+                try:
+                    warm_interval = int(getattr(self.config, 'torres_payout_warmup_sec', 90))
+                except Exception:
+                    warm_interval = 90
+                try:
+                    last_warm = getattr(self, '_torres_last_payout_warm', 0)
+                except Exception:
+                    last_warm = 0
+                try:
+                    if time.time() - float(last_warm or 0) >= max(30, warm_interval):
+                        # This fetches and stores both digital and binary payouts in the API cache
+                        _ = self.api.get_payout(asset)
+                        try:
+                            setattr(self, '_torres_last_payout_warm', time.time())
+                        except Exception:
+                            pass
+                except Exception:
+                    # Never break loop due to warm-up failures
+                    pass
                 # Opcional: disparo por evento (sem gate de minuto) quando habilitado em config
                 try:
                     event_driven = bool(getattr(self.config, 'torres_event_driven', False))
