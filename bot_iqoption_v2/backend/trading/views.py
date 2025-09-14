@@ -16,7 +16,7 @@ from .serializers import (
     CatalogAssetsSerializer, DashboardDataSerializer, SessionStatsSerializer
 )
 from .iq_api import IQOptionManager
-from .strategies import get_strategy
+from .strategies import get_strategy, get_strategy_info
 from .catalog import AssetCatalogService
 
 # In-memory catalog status per user to avoid fragile log parsing on the frontend
@@ -847,3 +847,20 @@ def get_payouts(request):
 
     except Exception as e:
         return Response({'error': f'Erro ao obter payouts: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_available_strategies(request):
+    """Return list of all available trading strategies with their information"""
+    try:
+        strategies = get_strategy_info()
+        return Response({
+            'strategies': strategies,
+            'count': len(strategies)
+        })
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter estratégias: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

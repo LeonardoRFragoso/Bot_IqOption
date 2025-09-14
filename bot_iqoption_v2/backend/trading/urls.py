@@ -34,4 +34,7 @@ urlpatterns = [
     
     # Market status
     path('market/status/', views.market_status, name='market_status'),
+    
+    # Strategies
+    path('strategies/', views.get_available_strategies, name='available_strategies'),
 ]

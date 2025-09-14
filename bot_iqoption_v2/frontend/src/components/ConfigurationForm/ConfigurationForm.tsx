@@ -226,6 +226,9 @@ const ConfigurationForm: React.FC = () => {
                     <MenuItem value="mhi">MHI (3 Velas)</MenuItem>
                     <MenuItem value="torres_gemeas">Torres Gêmeas (1 Vela)</MenuItem>
                     <MenuItem value="mhi_m5">MHI M5 (5 Minutos)</MenuItem>
+                    <MenuItem value="rsi">RSI (Índice de Força Relativa)</MenuItem>
+                    <MenuItem value="moving_average">Moving Average (Cruzamento de Médias)</MenuItem>
+                    <MenuItem value="bollinger_bands">Bollinger Bands (Bandas de Bollinger)</MenuItem>
                   </Select>
                 </FormControl>
               </Box>
@@ -269,6 +272,167 @@ const ConfigurationForm: React.FC = () => {
           </Stack>
 
           <Divider sx={{ my: 4 }} />
+
+          {/* Configurações Específicas das Estratégias */}
+          {formData.default_strategy === 'rsi' && (
+            <>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Configurações RSI
+              </Typography>
+              <Stack spacing={3}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Período RSI"
+                      type="number"
+                      value={formData.rsi_period || 14}
+                      onChange={handleTextFieldChange('rsi_period')}
+                      inputProps={{ step: 1, min: 5, max: 50 }}
+                      helperText="Período para cálculo do RSI"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Nível Sobrevenda"
+                      type="number"
+                      value={formData.rsi_oversold || 30}
+                      onChange={handleTextFieldChange('rsi_oversold')}
+                      inputProps={{ step: 1, min: 10, max: 40 }}
+                      helperText="RSI ≤ valor = CALL"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Nível Sobrecompra"
+                      type="number"
+                      value={formData.rsi_overbought || 70}
+                      onChange={handleTextFieldChange('rsi_overbought')}
+                      inputProps={{ step: 1, min: 60, max: 90 }}
+                      helperText="RSI ≥ valor = PUT"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Timeframe (seg)"
+                      type="number"
+                      value={formData.rsi_timeframe || 60}
+                      onChange={handleTextFieldChange('rsi_timeframe')}
+                      inputProps={{ step: 60, min: 60, max: 300 }}
+                      helperText="60=M1, 300=M5"
+                    />
+                  </Box>
+                </Box>
+              </Stack>
+              <Divider sx={{ my: 4 }} />
+            </>
+          )}
+
+          {formData.default_strategy === 'moving_average' && (
+            <>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Configurações Moving Average
+              </Typography>
+              <Stack spacing={3}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Período MA Rápida"
+                      type="number"
+                      value={formData.ma_fast_period || 9}
+                      onChange={handleTextFieldChange('ma_fast_period')}
+                      inputProps={{ step: 1, min: 3, max: 50 }}
+                      helperText="Média móvel rápida"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Período MA Lenta"
+                      type="number"
+                      value={formData.ma_slow_period || 21}
+                      onChange={handleTextFieldChange('ma_slow_period')}
+                      inputProps={{ step: 1, min: 10, max: 100 }}
+                      helperText="Média móvel lenta"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Timeframe (seg)"
+                      type="number"
+                      value={formData.ma_timeframe || 60}
+                      onChange={handleTextFieldChange('ma_timeframe')}
+                      inputProps={{ step: 60, min: 60, max: 300 }}
+                      helperText="60=M1, 300=M5"
+                    />
+                  </Box>
+                </Box>
+              </Stack>
+              <Divider sx={{ my: 4 }} />
+            </>
+          )}
+
+          {formData.default_strategy === 'bollinger_bands' && (
+            <>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Configurações Bollinger Bands
+              </Typography>
+              <Stack spacing={3}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Período BB"
+                      type="number"
+                      value={formData.bb_period || 20}
+                      onChange={handleTextFieldChange('bb_period')}
+                      inputProps={{ step: 1, min: 10, max: 50 }}
+                      helperText="Período das Bollinger Bands"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Desvio Padrão"
+                      type="number"
+                      value={formData.bb_std_dev || 2.0}
+                      onChange={handleTextFieldChange('bb_std_dev')}
+                      inputProps={{ step: 0.1, min: 1.0, max: 3.0 }}
+                      helperText="Multiplicador do desvio"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Threshold Toque"
+                      type="number"
+                      value={formData.bb_touch_threshold || 0.0001}
+                      onChange={handleTextFieldChange('bb_touch_threshold')}
+                      inputProps={{ step: 0.0001, min: 0.0001, max: 0.01 }}
+                      helperText="Sensibilidade do toque"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Timeframe (seg)"
+                      type="number"
+                      value={formData.bb_timeframe || 60}
+                      onChange={handleTextFieldChange('bb_timeframe')}
+                      inputProps={{ step: 60, min: 60, max: 300 }}
+                      helperText="60=M1, 300=M5"
+                    />
+                  </Box>
+                </Box>
+              </Stack>
+              <Divider sx={{ my: 4 }} />
+            </>
+          )}
 
           {/* Seção [MARTINGALE] */}
           <Typography variant="h6" sx={{ mb: 2 }}>

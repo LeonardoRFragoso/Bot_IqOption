@@ -39,7 +39,33 @@ export interface TradingConfiguration {
   soros_usar: boolean;
   soros_niveis: number;
   // Additional fields
-  default_strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5';
+  default_strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5' | 'rsi' | 'moving_average' | 'bollinger_bands';
+  
+  // Torres Gêmeas specific parameters
+  torres_event_driven?: boolean;
+  torres_event_cooldown_sec?: number;
+  torres_timeframe?: number;
+  torres_lookback?: number;
+  torres_tolerancia_pct?: number;
+  torres_break_buffer_pct?: number;
+  
+  // RSI specific parameters
+  rsi_period?: number;
+  rsi_oversold?: number;
+  rsi_overbought?: number;
+  rsi_timeframe?: number;
+  
+  // Moving Average specific parameters
+  ma_fast_period?: number;
+  ma_slow_period?: number;
+  ma_timeframe?: number;
+  
+  // Bollinger Bands specific parameters
+  bb_period?: number;
+  bb_std_dev?: number;
+  bb_touch_threshold?: number;
+  bb_timeframe?: number;
+  
   created_at: string;
   updated_at: string;
 }
@@ -48,7 +74,7 @@ export interface TradingSession {
   id: string | number;
   user: number;
   status: 'STOPPED' | 'RUNNING' | 'PAUSED' | 'ERROR';
-  strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5';
+  strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5' | 'rsi' | 'moving_average' | 'bollinger_bands';
   account_type: 'PRACTICE' | 'REAL';
   initial_balance: number;
   current_balance: number;

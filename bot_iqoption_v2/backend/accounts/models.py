@@ -227,6 +227,9 @@ class TradingConfiguration(models.Model):
             ('mhi', 'MHI'),
             ('torres_gemeas', 'Torres Gêmeas'),
             ('mhi_m5', 'MHI M5'),
+            ('rsi', 'RSI'),
+            ('moving_average', 'Moving Average'),
+            ('bollinger_bands', 'Bollinger Bands'),
         ],
         default='mhi',
         help_text="Estratégia padrão"
@@ -260,6 +263,60 @@ class TradingConfiguration(models.Model):
         decimal_places=3,
         default=0.000,
         help_text="Buffer extra para confirmar rompimento em %"
+    )
+    
+    # Parâmetros específicos da estratégia RSI
+    rsi_period = models.IntegerField(
+        default=14,
+        help_text="Período do RSI (padrão 14)"
+    )
+    rsi_oversold = models.IntegerField(
+        default=30,
+        help_text="Nível de sobrevenda do RSI (padrão 30)"
+    )
+    rsi_overbought = models.IntegerField(
+        default=70,
+        help_text="Nível de sobrecompra do RSI (padrão 70)"
+    )
+    rsi_timeframe = models.IntegerField(
+        default=60,
+        help_text="Timeframe em segundos para RSI (padrão M1=60)"
+    )
+    
+    # Parâmetros específicos da estratégia Moving Average
+    ma_fast_period = models.IntegerField(
+        default=9,
+        help_text="Período da média móvel rápida (padrão 9)"
+    )
+    ma_slow_period = models.IntegerField(
+        default=21,
+        help_text="Período da média móvel lenta (padrão 21)"
+    )
+    ma_timeframe = models.IntegerField(
+        default=60,
+        help_text="Timeframe em segundos para MA (padrão M1=60)"
+    )
+    
+    # Parâmetros específicos da estratégia Bollinger Bands
+    bb_period = models.IntegerField(
+        default=20,
+        help_text="Período das Bollinger Bands (padrão 20)"
+    )
+    bb_std_dev = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=2.00,
+        help_text="Desvio padrão das Bollinger Bands (padrão 2.0)"
+    )
+    bb_touch_threshold = models.DecimalField(
+        max_digits=6,
+        decimal_places=4,
+        default=0.0001,
+        help_text="Threshold para detectar toque na banda (padrão 0.0001)"
+    )
+    bb_timeframe = models.IntegerField(
+        default=60,
+        help_text="Timeframe em segundos para BB (padrão M1=60)"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)

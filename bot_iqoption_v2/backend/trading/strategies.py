@@ -437,15 +437,12 @@ class BaseStrategy:
             # Apply martingale multiplier
             if gale_level > 0:
                 entry_value = round(entry_value * float(self.config.martingale_fator), 2)
-            # Log attempt details
+            # Log attempt details (optimized - no server timestamp calls)
             try:
                 total_levels = martingale_levels
                 label = 'Entrada' if gale_level == 0 else f'Gale {gale_level}'
-                st_dbg = float(self.api.get_server_timestamp())
-                hhmmss = datetime.utcfromtimestamp(st_dbg).strftime('%H:%M:%S')
-                sec_dbg = int(st_dbg % 60)
                 self._log(
-                    f"Tentativa {label} | Nível {gale_level}/{total_levels} | Valor calculado: ${entry_value} | server={hhmmss} (sec={sec_dbg:02d})",
+                    f"Tentativa {label} | Nível {gale_level}/{total_levels} | Valor: ${entry_value}",
                     "INFO"
                 )
             except Exception:
@@ -454,68 +451,9 @@ class BaseStrategy:
             # Determinar tipo efetivo sem forçar DIGITAL (respeita decisão anterior)
             actual_operation_type = operation_type
 
-            # Otimização para Gales: minimizar atraso independente do timeframe
-            try:
-                if gale_level > 0:
-                    try:
-                        st_now2 = float(self.api.get_server_timestamp())
-                        sec_now2 = st_now2 % 60.0
-                    except Exception:
-                        sec_now2 = 0.0
-                    
-                    # Para M1 (expiration=1): usar BINARY após 1s para entrada imediata
-                    if int(expiration) == 1 and sec_now2 > 1.0 and actual_operation_type == 'digital':
-                        # Validar viabilidade do binary via payout em cache (sem chamadas pesadas)
-                        use_binary = True
-                        try:
-                            cached_p = getattr(self.api, 'get_payout_cached', None)
-                            if callable(cached_p):
-                                p = cached_p(asset, ttl=180) or {}
-                                if int(p.get('binary') or 0) <= 0:
-                                    use_binary = False
-                        except Exception:
-                            pass
-                        if use_binary:
-                            actual_operation_type = 'binary'
-                            try:
-                                self._log("Gale M1 >1s do minuto — mudando para BINARY para entrada imediata", "INFO")
-                            except Exception:
-                                pass
-                    
-                    # Para M5 (expiration=5): sempre pré-aquecer DIGITAL imediatamente
-                    elif int(expiration) == 5 and actual_operation_type == 'digital':
-                        try:
-                            if hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
-                                with self.api._api_lock:
-                                    self.api.subscribe_strike_list(asset, int(expiration))
-                        except Exception:
-                            pass
-                    
-                    # Para M1 dentro da janela de 0-1s: pré-aquecer DIGITAL
-                    elif int(expiration) == 1 and actual_operation_type == 'digital':
-                        try:
-                            if hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
-                                with self.api._api_lock:
-                                    self.api.subscribe_strike_list(asset, int(expiration))
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            # Pré-aquecimento já feito no pré-cálculo - pular para reduzir delay
 
-            # Diagnostic log before attempting to buy
-            try:
-                st_dbg2 = float(self.api.get_server_timestamp())
-                hhmmss2 = datetime.utcfromtimestamp(st_dbg2).strftime('%H:%M:%S')
-                sec_dbg2 = int(st_dbg2 % 60)
-                self._log(
-                    f"Preparando ordem | Par: {asset} | Tipo: {actual_operation_type} | Direção: {direction.upper()} | Expiração: {expiration}m | Valor: ${entry_value} | server={hhmmss2} (sec={sec_dbg2:02d})",
-                    "INFO"
-                )
-            except Exception:
-                self._log(
-                    f"Preparando ordem | Par: {asset} | Tipo: {actual_operation_type} | Direção: {direction.upper()} | Expiração: {expiration}m | Valor: ${entry_value}",
-                    "INFO"
-                )
+            # Skip diagnostic log to reduce delay - direct order execution
             
             # Place order
             success, order_id = self.api.buy_option(
@@ -1192,6 +1130,8 @@ class MHIM5Strategy(BaseStrategy):
                             if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
                                 with self.api._api_lock:
                                     self.api.subscribe_strike_list(asset, 5)  # 5-minute expiration
+                                    # Aguardar um pouco para o sistema se preparar
+                                    time.sleep(0.5)
                         except Exception:
                             pass
                         try:
@@ -1291,17 +1231,92 @@ class MHIM5Strategy(BaseStrategy):
             return None
 
 
-# Strategy factory
+# Import new strategies
+from .rsi_strategy import RSIStrategy
+from .moving_average_strategy import MovingAverageStrategy
+from .bollinger_strategy import BollingerBandsStrategy
+
+# Strategy factory - Combined existing and new strategies
 STRATEGIES = {
+    # Existing strategies
     'mhi': MHIStrategy,
     'torres_gemeas': TorresGemeasStrategy,
     'mhi_m5': MHIM5Strategy,
+    # New strategies
+    'rsi': RSIStrategy,
+    'moving_average': MovingAverageStrategy,
+    'bollinger_bands': BollingerBandsStrategy,
 }
 
 
 def get_strategy(strategy_name: str, api: IQOptionAPI, session: TradingSession) -> Optional[BaseStrategy]:
-    """Get strategy instance by name"""
+    """Get strategy instance by name (existing + new strategies)"""
     strategy_class = STRATEGIES.get(strategy_name.lower())
     if strategy_class:
         return strategy_class(api, session)
     return None
+
+
+def get_strategy_info():
+    """Get information about all available strategies"""
+    return {
+        # Existing strategies
+        'mhi': {
+            'name': 'MHI',
+            'description': 'Análise de 3 velas em timeframe M1',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'candlestick_pattern'
+        },
+        'torres_gemeas': {
+            'name': 'Torres Gêmeas',
+            'description': 'Análise de padrão Twin Towers com neckline breakout',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'pattern_recognition'
+        },
+        'mhi_m5': {
+            'name': 'MHI M5',
+            'description': 'Análise de 3 velas em timeframe M5',
+            'timeframe': 'M5',
+            'expiration': '5 minutos',
+            'type': 'candlestick_pattern'
+        },
+        # New strategies
+        'rsi': {
+            'name': 'RSI',
+            'description': 'Relative Strength Index - Identifica sobrecompra/sobrevenda',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'technical_indicator',
+            'parameters': {
+                'rsi_period': 14,
+                'rsi_oversold': 30,
+                'rsi_overbought': 70
+            }
+        },
+        'moving_average': {
+            'name': 'Moving Average Crossover',
+            'description': 'Cruzamento de médias móveis (Golden/Death Cross)',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'technical_indicator',
+            'parameters': {
+                'ma_fast_period': 9,
+                'ma_slow_period': 21,
+                'ma_confirmation_candles': 2
+            }
+        },
+        'bollinger_bands': {
+            'name': 'Bollinger Bands',
+            'description': 'Bandas de Bollinger - Toque nas bandas superior/inferior',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'technical_indicator',
+            'parameters': {
+                'bb_period': 20,
+                'bb_std_dev': 2.0,
+                'bb_touch_threshold': 0.001
+            }
+        }
+    }
