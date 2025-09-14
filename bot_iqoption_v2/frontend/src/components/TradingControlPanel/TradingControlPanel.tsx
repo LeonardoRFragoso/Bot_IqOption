@@ -58,6 +58,7 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const { socket } = useTradingRealtime();
   const [liveOps, setLiveOps] = useState<Map<string, Operation>>(new Map());
+  const [isStarting, setIsStarting] = useState(false);
 
   // Trading control functions will use apiService directly
 
@@ -329,6 +330,7 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
     if (!selectedAsset || !selectedStrategy) return;
     
     try {
+      setIsStarting(true);
       // Prevent 400 if there is an active session (RUNNING/PAUSED)
       try {
         const active = await apiService.getActiveSession();
@@ -359,6 +361,8 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       const anyErr = error as any;
       const backendMsg = anyErr?.response?.data?.error || anyErr?.message || '';
       alert(`Não foi possível iniciar o trading. ${backendMsg ? 'Detalhes: ' + backendMsg : 'Verifique credenciais da IQ Option, conta (Demo/Real) e o ativo selecionado.'}`);
+    } finally {
+      setIsStarting(false);
     }
   };
 
@@ -700,7 +704,7 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
               size="large"
               startIcon={<PlayArrow />}
               onClick={handleStartTrading}
-              disabled={!selectedAsset || !selectedStrategy || isAnalyzing}
+              disabled={!selectedAsset || !selectedStrategy || isAnalyzing || isStarting}
               sx={{ 
                 minWidth: 150,
                 background: 'linear-gradient(135deg, #00E676 0%, #00C853 100%)',
@@ -709,7 +713,7 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
                 }
               }}
             >
-              INICIAR TRADING
+              {isStarting ? 'INICIANDO...' : 'INICIAR TRADING'}
             </Button>
           )}
 

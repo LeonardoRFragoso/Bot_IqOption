@@ -23,6 +23,7 @@ from iqoptionapi.expiration import get_expiration_time  # type: ignore
 import iqoptionapi.global_value as IQGV  # type: ignore
 import sys
 from django.conf import settings
+from django.db import transaction
 from .models import TradingLog, MarketData
 
 logger = logging.getLogger(__name__)
@@ -932,7 +933,7 @@ class IQOptionAPI:
             pass
         return None
     
-    def buy_option(self, asset: str, amount: float, direction: str, expiration: int, option_type: str = 'binary') -> Tuple[bool, Optional[str]]:
+    def buy_option(self, asset: str, amount: float, direction: str, expiration: int, option_type: str = 'binary', urgent: bool = False) -> Tuple[bool, Optional[str]]:
         """Place a buy order"""
         if not self.connected or not self.api:
             return False, None
@@ -961,9 +962,13 @@ class IQOptionAPI:
                 if option_type == 'digital':
                     st_fp = float(self.get_server_timestamp())
                     sec_fp = st_fp % 60.0
-                    # In the first ~1.2s of the minute for 1m ops, skip heavy vendor calls
-                    if int(expiration) == 1 and sec_fp <= 1.2:
-                        fast_path = True
+                    # For 1m ops, widen the fast-path window to ~2.0s to tolerate small delays.
+                    # When urgent=True (e.g., Gale), force fast-path regardless of current second.
+                    if int(expiration) == 1:
+                        if urgent:
+                            fast_path = True
+                        elif sec_fp <= 2.0:
+                            fast_path = True
             except Exception:
                 fast_path = False
 
@@ -1066,10 +1071,11 @@ class IQOptionAPI:
                             )
                         except Exception:
                             pass
-                        # Se o pré-aquecimento não encontrou o instrument_id esperado, fazer fallback imediato
+                        # Se o pré-aquecimento não encontrou o instrument_id esperado, tentar fallback imediato
                         # para garantir a entrada no minuto correto (evita ficar aguardando ACK digital que não virá)
                         if not quotes_contains_id:
-                            # Caminho crítico: usar payout em cache (sem chamadas pesadas ao vendor)
+                            # Caminho crítico: preferir cache (sem chamadas pesadas). Para ordens urgentes (ex.: Gale),
+                            # permitir fallback sem cache, desde que ACTIVES esteja mapeado, para não perder o timing.
                             bin_payout = 0
                             try:
                                 cached = self.get_payout_cached(asset, ttl=180)
@@ -1078,37 +1084,59 @@ class IQOptionAPI:
                             except Exception:
                                 bin_payout = 0
                             try:
-                                # Evitar consulta pesada do open_time no caminho crítico; usar payout>0 como proxy
-                                if bin_payout > 0 and not binary_suspended_local:
-                                    self._log_message(
-                                        "Digital sem instrument_id após pré-aquecimento — usando fallback imediato binary-options (via payout cache)",
-                                        "WARNING"
-                                    )
-                                    with self._api_lock:
-                                        fb_ok, fb_id = self.api.buy(amount, asset, direction, int(expiration))
-                                    if fb_ok:
+                                fallback_allowed = (not binary_suspended_local) and (urgent or bin_payout > 0)
+                                if fallback_allowed:
+                                    # Garantir mapeamento ACTIVES antes de tentar comprar em binary
+                                    try:
+                                        with self._api_lock:
+                                            mapped = asset in IQC.ACTIVES
+                                            if (not mapped) and hasattr(self, 'ensure_active_mapping'):
+                                                mapped = self.ensure_active_mapping(asset)
+                                    except Exception:
+                                        mapped = False
+                                    if not mapped:
                                         self._log_message(
-                                            f"Fallback binary-options OK | order_id={fb_id} | server={self._format_server_time()}",
-                                            "INFO"
+                                            "Fallback binary-options abortado: ativo sem mapeamento ACTIVES",
+                                            "WARNING"
                                         )
-                                        result_holder['success'] = True
-                                        result_holder['order_id'] = fb_id
-                                        result_holder['done'] = True
-                                        return
                                     else:
-                                        self._log_message(
-                                            f"Fallback binary-options falhou | detalhe={fb_id}",
-                                            "ERROR"
-                                        )
-                                        try:
-                                            if isinstance(fb_id, str) and 'suspended' in fb_id.lower():
-                                                binary_suspended_local = True
-                                                self._log_message(
-                                                    "Detecção: ativo binary suspenso — próximas tentativas de fallback serão puladas",
-                                                    "INFO"
-                                                )
-                                        except Exception:
-                                            pass
+                                        if bin_payout <= 0 and urgent:
+                                            self._log_message(
+                                                "Fallback binary-options (urgente) sem payout em cache — tentando mesmo assim",
+                                                "WARNING"
+                                            )
+                                        with self._api_lock:
+                                            fb_ok, fb_id = self.api.buy(amount, asset, direction, int(expiration))
+                                        if fb_ok:
+                                            self._log_message(
+                                                f"Fallback binary-options OK | order_id={fb_id} | server={self._format_server_time()}",
+                                                "INFO"
+                                            )
+                                            # Register effective order type mapping for this order
+                                            try:
+                                                self._last_effective_option_type = 'binary'
+                                                self._order_type_by_id[str(fb_id)] = 'binary'
+                                            except Exception:
+                                                pass
+                                            result_holder['success'] = True
+                                            result_holder['order_id'] = fb_id
+                                            result_holder['effective_type'] = 'binary'
+                                            result_holder['done'] = True
+                                            return
+                                        else:
+                                            self._log_message(
+                                                f"Fallback binary-options falhou | detalhe={fb_id}",
+                                                "ERROR"
+                                            )
+                                            try:
+                                                if isinstance(fb_id, str) and 'suspended' in fb_id.lower():
+                                                    binary_suspended_local = True
+                                                    self._log_message(
+                                                        "Detecção: ativo binary suspenso — próximas tentativas de fallback serão puladas",
+                                                        "INFO"
+                                                    )
+                                            except Exception:
+                                                pass
                                 else:
                                     self._log_message(
                                         "Fallback binary-options não tentado: binary fechado/suspenso ou sem payout em cache",
@@ -1118,7 +1146,7 @@ class IQOptionAPI:
                                 self._log_message(f"Erro no fallback binary-options: {str(fb_ex)}", "ERROR")
                             # Sem instrument_id e sem fallback viável -> abortar rapidamente
                             try:
-                                cond_no_binary = (bin_payout <= 0) or binary_suspended_local
+                                cond_no_binary = (not ((not binary_suspended_local) and (urgent or bin_payout > 0))) or binary_suspended_local
                             except Exception:
                                 cond_no_binary = True
                             if cond_no_binary:
@@ -1175,6 +1203,14 @@ class IQOptionAPI:
             )
 
             if success:
+                # Persist effective type mapping for check_win(); default to requested option_type unless overridden by worker
+                try:
+                    eff_type = result_holder.get('effective_type') or option_type
+                    eff_type = 'digital' if str(eff_type).lower().strip() == 'digital' else 'binary'
+                    self._last_effective_option_type = eff_type
+                    self._order_type_by_id[str(order_id)] = eff_type
+                except Exception:
+                    pass
                 self._log_message(
                     f"Ordem aberta: {asset} {direction} ${amount} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
                     "INFO"
@@ -1361,23 +1397,37 @@ class IQOptionAPI:
         """Store candle data in database"""
         if not self.user:
             return
-    
+
         try:
             for candle in candles[-10:]:  # Store only last 10 candles to avoid too much data
-                MarketData.objects.update_or_create(
-                    asset=asset,
-                    timeframe=timeframe,
-                    timestamp=datetime.fromtimestamp(candle['from'], tz=timezone.utc),
-                    defaults={
-                    'open_price': candle['open'],
-                    'high_price': candle.get('max', candle.get('high', candle['close'])),
-                    'low_price': candle.get('min', candle.get('low', candle['open'])),
-                    'close_price': candle['close'],
-                    'volume': candle.get('volume', 0)
-                    }
-                )
+                attempts = 3
+                for attempt in range(attempts):
+                    try:
+                        with transaction.atomic():
+                            MarketData.objects.update_or_create(
+                                asset=asset,
+                                timeframe=timeframe,
+                                timestamp=datetime.fromtimestamp(candle['from'], tz=timezone.utc),
+                                defaults={
+                                    'open_price': candle['open'],
+                                    'high_price': candle.get('max', candle.get('high', candle['close'])),
+                                    'low_price': candle.get('min', candle.get('low', candle['open'])),
+                                    'close_price': candle['close'],
+                                    'volume': candle.get('volume', 0)
+                                }
+                            )
+                        break  # stored successfully; next candle
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if 'locked' in msg or 'database is locked' in msg:
+                            if attempt < attempts - 1:
+                                time.sleep(2)
+                                continue
+                        # On non-locked errors or after retries, log and skip to next candle
+                        logger.error(f"Erro ao armazenar velas (tentativa {attempt+1}/{attempts}): {str(e)}")
+                        break
         except Exception as e:
-            logger.error(f"Erro ao armazenar velas: {str(e)}")
+            logger.error(f"Erro ao armazenar velas (bloco externo): {str(e)}")
     
     # Duplicated methods removed. Canonical implementations of _safe_close, disconnect,
     # and _attempt_reconnection are defined earlier in this class.

@@ -454,6 +454,42 @@ class BaseStrategy:
             # Determinar tipo efetivo sem forçar DIGITAL (respeita decisão anterior)
             actual_operation_type = operation_type
 
+            # Gale em M1: minimizar atraso. Se passamos de 1s do minuto, preferir BINARY para envio imediato;
+            # caso ainda estejamos <=1s, manter DIGITAL e pré-aquecer strikes.
+            try:
+                if gale_level > 0 and int(expiration) == 1:
+                    try:
+                        st_now2 = float(self.api.get_server_timestamp())
+                        sec_now2 = st_now2 % 60.0
+                    except Exception:
+                        sec_now2 = 0.0
+                    if sec_now2 > 1.0 and actual_operation_type == 'digital':
+                        # Validar viabilidade do binary via payout em cache (sem chamadas pesadas)
+                        use_binary = True
+                        try:
+                            cached_p = getattr(self.api, 'get_payout_cached', None)
+                            if callable(cached_p):
+                                p = cached_p(asset, ttl=180) or {}
+                                if int(p.get('binary') or 0) <= 0:
+                                    use_binary = False
+                        except Exception:
+                            pass
+                        if use_binary:
+                            actual_operation_type = 'binary'
+                            try:
+                                self._log("Gale >1s do minuto — mudando para BINARY para entrada imediata", "INFO")
+                            except Exception:
+                                pass
+                    elif actual_operation_type == 'digital':
+                        # Estamos dentro da janela de 0-1s: pré-aquecer DIGITAL imediatamente antes de enviar
+                        try:
+                            if hasattr(self.api, 'subscribe_strike_list'):
+                                self.api.subscribe_strike_list(asset, int(expiration))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             # Diagnostic log before attempting to buy
             try:
                 st_dbg2 = float(self.api.get_server_timestamp())
@@ -475,7 +511,8 @@ class BaseStrategy:
                 amount=entry_value,
                 direction=direction,
                 expiration=expiration,
-                option_type=actual_operation_type
+                option_type=actual_operation_type,
+                urgent=bool(gale_level > 0 and int(expiration) == 1)
             )
             
             # Diagnostic: log immediate result from API
@@ -537,8 +574,8 @@ class BaseStrategy:
                 # Execute next Gale immediately on the next candle (no extra 1-minute wait)
                 if gale_level < martingale_levels:
                     self._log("Executando Gale imediatamente na próxima vela...", "INFO")
-                    # Pequeno descanso para garantir sincronização após recebimento do resultado
-                    time.sleep(0.1)
+                    # Sem descanso adicional: enviar imediatamente para minimizar atraso no início da vela
+                    pass
                 
         # Full series ended without a win: reset Soros progression
         if self.config.soros_usar:
