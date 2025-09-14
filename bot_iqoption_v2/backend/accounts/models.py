@@ -12,7 +12,63 @@ class User(AbstractUser):
     email = models.EmailField(
         unique=True,
         validators=[EmailValidator()],
-        help_text="Email usado para login no sistema"
+        help_text="Threshold para toque nas bandas"
+    )
+    
+    # Parâmetros específicos da estratégia Engulfing
+    engulfing_min_body_ratio = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=1.20,
+        help_text="Proporção mínima do corpo engolidor"
+    )
+    engulfing_confirmation_candles = models.IntegerField(
+        default=1,
+        help_text="Número de velas para confirmação"
+    )
+    
+    # Parâmetros específicos da estratégia Candlestick Patterns
+    cs_body_threshold = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.30,
+        help_text="Threshold para tamanho do corpo"
+    )
+    cs_shadow_ratio = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=2.00,
+        help_text="Proporção mínima da sombra"
+    )
+    cs_doji_threshold = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.10,
+        help_text="Threshold para detecção de Doji"
+    )
+    
+    # Parâmetros específicos da estratégia MACD
+    macd_timeframe = models.IntegerField(
+        default=60,
+        help_text="Timeframe em segundos (60=M1, 300=M5)"
+    )
+    macd_fast_period = models.IntegerField(
+        default=12,
+        help_text="Período da EMA rápida"
+    )
+    macd_slow_period = models.IntegerField(
+        default=26,
+        help_text="Período da EMA lenta"
+    )
+    macd_signal_period = models.IntegerField(
+        default=9,
+        help_text="Período da linha de sinal"
+    )
+    macd_min_histogram = models.DecimalField(
+        max_digits=10,
+        decimal_places=8,
+        default=0.00001000,
+        help_text="Threshold mínimo do histograma"
     )
     
     # IQ Option credentials (encrypted)
@@ -230,6 +286,9 @@ class TradingConfiguration(models.Model):
             ('rsi', 'RSI'),
             ('moving_average', 'Moving Average'),
             ('bollinger_bands', 'Bollinger Bands'),
+            ('engulfing', 'Engolfo (Engulfing)'),
+            ('candlestick', 'Padrões de Candlestick'),
+            ('macd', 'MACD'),
         ],
         default='mhi',
         help_text="Estratégia padrão"
@@ -317,6 +376,62 @@ class TradingConfiguration(models.Model):
     bb_timeframe = models.IntegerField(
         default=60,
         help_text="Timeframe em segundos para BB (padrão M1=60)"
+    )
+    
+    # Parâmetros específicos da estratégia Engulfing
+    engulfing_min_body_ratio = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=1.20,
+        help_text="Proporção mínima do corpo engolidor"
+    )
+    engulfing_confirmation_candles = models.IntegerField(
+        default=1,
+        help_text="Número de velas para confirmação"
+    )
+    
+    # Parâmetros específicos da estratégia Candlestick Patterns
+    cs_body_threshold = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.30,
+        help_text="Threshold para tamanho do corpo"
+    )
+    cs_shadow_ratio = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=2.00,
+        help_text="Proporção mínima da sombra"
+    )
+    cs_doji_threshold = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.10,
+        help_text="Threshold para detecção de Doji"
+    )
+    
+    # Parâmetros específicos da estratégia MACD
+    macd_timeframe = models.IntegerField(
+        default=60,
+        help_text="Timeframe em segundos (60=M1, 300=M5)"
+    )
+    macd_fast_period = models.IntegerField(
+        default=12,
+        help_text="Período da EMA rápida"
+    )
+    macd_slow_period = models.IntegerField(
+        default=26,
+        help_text="Período da EMA lenta"
+    )
+    macd_signal_period = models.IntegerField(
+        default=9,
+        help_text="Período da linha de sinal"
+    )
+    macd_min_histogram = models.DecimalField(
+        max_digits=10,
+        decimal_places=8,
+        default=0.00001000,
+        help_text="Threshold mínimo do histograma"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)

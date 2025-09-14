@@ -193,7 +193,11 @@ class ApiService {
     return response.data;
   }
 
-  async runAssetCatalog(strategies: string[] = ['mhi', 'torres_gemeas', 'mhi_m5']): Promise<ApiResponse<unknown>> {
+  async getCatalogResults(): Promise<AssetCatalog[]> {
+    return this.getAssetCatalog();
+  }
+
+  async runAssetCatalog(strategies: string[] = ['mhi', 'torres_gemeas', 'mhi_m5', 'rsi', 'moving_average', 'bollinger_bands', 'engulfing', 'candlestick', 'macd']): Promise<ApiResponse<unknown>> {
     const response: AxiosResponse<ApiResponse<unknown>> = await this.api.post('/trading/catalog/', { strategies });
     return response.data;
   }

@@ -14,6 +14,9 @@ from .models import TradingSession, Operation, TradingLog
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from .serializers import OperationSerializer, TradingSessionSerializer
+from .engulfing_strategy import EngulfingStrategy
+from .candlestick_strategy import CandlestickStrategy
+from .macd_strategy import MACDStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -757,24 +760,24 @@ class MHIStrategy(BaseStrategy):
             self._log("Erro ao obter velas para análise", "ERROR")
             return None
         
-        # Validate that returned candles are M5 (avoid accidental M1 fallback from API)
+        # Validate that returned candles are M1 (60 seconds timeframe)
         try:
             if len(candles) >= 3:
                 step1 = int(candles[-1]['from']) - int(candles[-2]['from'])
                 step2 = int(candles[-2]['from']) - int(candles[-3]['from'])
-                if not (240 <= step1 <= 360 and 240 <= step2 <= 360):
+                if not (50 <= step1 <= 70 and 50 <= step2 <= 70):
                     # One quick re-fetch attempt
                     alt = self.api.get_candles(asset, timeframe, max(candles_count, 5))
                     if alt and len(alt) >= 3:
                         s1 = int(alt[-1]['from']) - int(alt[-2]['from'])
                         s2 = int(alt[-2]['from']) - int(alt[-3]['from'])
-                        if 240 <= s1 <= 360 and 240 <= s2 <= 360:
+                        if 50 <= s1 <= 70 and 50 <= s2 <= 70:
                             candles = alt
                         else:
-                            self._log("MHI M5: timeframe inconsistente (dados aparentam ser M1). Abortando análise.", "WARNING")
+                            self._log("MHI M1: timeframe inconsistente (dados não são M1). Abortando análise.", "WARNING")
                             return None
                     else:
-                        self._log("MHI M5: histórico insuficiente após re-tentativa. Abortando análise.", "WARNING")
+                        self._log("MHI M1: histórico insuficiente após re-tentativa. Abortando análise.", "WARNING")
                         return None
         except Exception:
             # Fail safe: proceed without validation
@@ -789,13 +792,10 @@ class MHIStrategy(BaseStrategy):
                 ts0 = datetime.fromtimestamp(keys[0])
                 ts1 = datetime.fromtimestamp(keys[1])
                 ts2 = datetime.fromtimestamp(keys[2])
-                idx0 = (keys[0] // 60) % 5
-                idx1 = (keys[1] // 60) % 5
-                idx2 = (keys[2] // 60) % 5
                 self._log(
-                    f"MHI DEBUG | sel0={ts0.strftime('%H:%M:%S')}(m%5={idx0}) "
-                    f"sel1={ts1.strftime('%H:%M:%S')}(m%5={idx1}) "
-                    f"sel2={ts2.strftime('%H:%M:%S')}(m%5={idx2})",
+                    f"MHI M1 DEBUG | sel0={ts0.strftime('%H:%M:%S')} "
+                    f"sel1={ts1.strftime('%H:%M:%S')} "
+                    f"sel2={ts2.strftime('%H:%M:%S')}",
                     "DEBUG"
                 )
             except Exception:
@@ -972,7 +972,8 @@ class TorresGemeasStrategy(BaseStrategy):
             candles = self.api.get_candles(asset, timeframe, max(lookback, getattr(self.config, 'velas_medias', 20)))
             if self.config.analise_medias and candles:
                 trend = self._analyze_moving_averages(candles, self.config.velas_medias)
-        except Exception:
+        except Exception as e:
+            self._log(f"Erro ao obter candles para Torres Gêmeas: {str(e)}", "ERROR")
             candles = None
 
         if not candles or len(candles) < 10:
@@ -1246,6 +1247,9 @@ STRATEGIES = {
     'rsi': RSIStrategy,
     'moving_average': MovingAverageStrategy,
     'bollinger_bands': BollingerBandsStrategy,
+    'engulfing': EngulfingStrategy,
+    'candlestick': CandlestickStrategy,
+    'macd': MACDStrategy,
 }
 
 
@@ -1317,6 +1321,42 @@ def get_strategy_info():
                 'bb_period': 20,
                 'bb_std_dev': 2.0,
                 'bb_touch_threshold': 0.001
+            }
+        },
+        'engulfing': {
+            'name': 'Engolfo (Engulfing)',
+            'description': 'Padrão de candlestick Engulfing - reversão de tendência',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'candlestick_pattern',
+            'parameters': {
+                'engulfing_min_body_ratio': 1.2,
+                'engulfing_confirmation_candles': 1
+            }
+        },
+        'candlestick': {
+            'name': 'Padrões de Candlestick',
+            'description': 'Múltiplos padrões: Hammer, Doji, Pin Bar, Marubozu, etc.',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'candlestick_pattern',
+            'parameters': {
+                'cs_body_threshold': 0.3,
+                'cs_shadow_ratio': 2.0,
+                'cs_doji_threshold': 0.1
+            }
+        },
+        'macd': {
+            'name': 'MACD',
+            'description': 'Moving Average Convergence Divergence - cruzamentos e divergências',
+            'timeframe': 'M1',
+            'expiration': '1 minuto',
+            'type': 'technical_indicator',
+            'parameters': {
+                'macd_fast_period': 12,
+                'macd_slow_period': 26,
+                'macd_signal_period': 9,
+                'macd_min_histogram': 0.00001
             }
         }
     }

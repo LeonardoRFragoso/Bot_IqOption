@@ -39,7 +39,7 @@ export interface TradingConfiguration {
   soros_usar: boolean;
   soros_niveis: number;
   // Additional fields
-  default_strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5' | 'rsi' | 'moving_average' | 'bollinger_bands';
+  default_strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5' | 'rsi' | 'moving_average' | 'bollinger_bands' | 'engulfing' | 'candlestick' | 'macd';
   
   // Torres Gêmeas specific parameters
   torres_event_driven?: boolean;
@@ -60,10 +60,26 @@ export interface TradingConfiguration {
   ma_slow_period?: number;
   ma_timeframe?: number;
   
-  // Bollinger Bands specific parameters
+  // Bollinger Bands strategy parameters
   bb_period?: number;
   bb_std_dev?: number;
   bb_touch_threshold?: number;
+  
+  // Engulfing strategy parameters
+  engulfing_min_body_ratio?: number;
+  engulfing_confirmation_candles?: number;
+  
+  // Candlestick patterns strategy parameters
+  cs_body_threshold?: number;
+  cs_shadow_ratio?: number;
+  cs_doji_threshold?: number;
+  
+  // MACD strategy parameters
+  macd_timeframe?: number;
+  macd_fast_period?: number;
+  macd_slow_period?: number;
+  macd_signal_period?: number;
+  macd_min_histogram?: number;
   bb_timeframe?: number;
   
   created_at: string;
@@ -74,7 +90,7 @@ export interface TradingSession {
   id: string | number;
   user: number;
   status: 'STOPPED' | 'RUNNING' | 'PAUSED' | 'ERROR';
-  strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5' | 'rsi' | 'moving_average' | 'bollinger_bands';
+  strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5' | 'rsi' | 'moving_average' | 'bollinger_bands' | 'engulfing' | 'candlestick' | 'macd';
   account_type: 'PRACTICE' | 'REAL';
   initial_balance: number;
   current_balance: number;

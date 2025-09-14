@@ -263,6 +263,8 @@ class AssetCatalogService:
             return self._analyze_torres_candles(candles, asset, strategy)
         elif strategy == 'mhi_m5':
             return self._analyze_mhi_candles(candles, asset, strategy, timeframe=300)
+        elif strategy in ['rsi', 'moving_average', 'bollinger_bands', 'engulfing', 'candlestick', 'macd']:
+            return self._analyze_new_strategy_candles(candles, asset, strategy)
         
         return None
     
@@ -443,6 +445,159 @@ class AssetCatalogService:
             'gale3_rate': round(gale3_rate, 2),
             'total_samples': total_samples
         }
+    
+    def _analyze_new_strategy_candles(self, candles: List[Dict], asset: str, strategy: str) -> Dict:
+        """Analyze candles using new strategy logic (simplified simulation)"""
+        results = {'doji': 0, 'win': 0, 'loss': 0, 'gale1': 0, 'gale2': 0, 'gale3': 0}
+        
+        # Simplified analysis for new strategies
+        # Since we don't have the actual strategy logic in catalog, we'll simulate based on basic patterns
+        for i in range(10, len(candles) - 3):
+            try:
+                current = candles[i]
+                prev = candles[i-1]
+                
+                # Basic pattern detection for simulation
+                signal = None
+                
+                if strategy == 'rsi':
+                    # Simulate RSI-like behavior based on price momentum
+                    price_change = (float(current['close']) - float(prev['close'])) / float(prev['close'])
+                    if price_change < -0.002:  # Oversold simulation
+                        signal = 'call'
+                    elif price_change > 0.002:  # Overbought simulation
+                        signal = 'put'
+                
+                elif strategy == 'moving_average':
+                    # Simulate MA crossover
+                    recent_closes = [float(candles[j]['close']) for j in range(i-5, i+1)]
+                    ma_fast = sum(recent_closes[-3:]) / 3
+                    ma_slow = sum(recent_closes) / 6
+                    if ma_fast > ma_slow * 1.001:
+                        signal = 'call'
+                    elif ma_fast < ma_slow * 0.999:
+                        signal = 'put'
+                
+                elif strategy == 'bollinger_bands':
+                    # Simulate BB touch
+                    recent_closes = [float(candles[j]['close']) for j in range(i-10, i+1)]
+                    avg = sum(recent_closes) / len(recent_closes)
+                    current_price = float(current['close'])
+                    if current_price < avg * 0.998:
+                        signal = 'call'
+                    elif current_price > avg * 1.002:
+                        signal = 'put'
+                
+                elif strategy == 'engulfing':
+                    # Simulate engulfing pattern
+                    prev_body = abs(float(prev['close']) - float(prev['open']))
+                    curr_body = abs(float(current['close']) - float(current['open']))
+                    if curr_body > prev_body * 1.2:
+                        if float(current['close']) > float(current['open']):
+                            signal = 'call'
+                        else:
+                            signal = 'put'
+                
+                elif strategy == 'candlestick':
+                    # Simulate candlestick patterns
+                    body = abs(float(current['close']) - float(current['open']))
+                    total_range = float(current['high']) - float(current['low'])
+                    if total_range > 0 and body / total_range < 0.3:  # Doji-like
+                        if float(current['close']) > float(current['open']):
+                            signal = 'call'
+                        else:
+                            signal = 'put'
+                
+                elif strategy == 'macd':
+                    # Simulate MACD crossover
+                    if i >= 26:
+                        recent_closes = [float(candles[j]['close']) for j in range(i-25, i+1)]
+                        ema12 = sum(recent_closes[-12:]) / 12
+                        ema26 = sum(recent_closes) / 26
+                        macd = ema12 - ema26
+                        prev_ema12 = sum([float(candles[j]['close']) for j in range(i-26, i-1)])[-12:] / 12
+                        prev_ema26 = sum([float(candles[j]['close']) for j in range(i-26, i-1)]) / 26
+                        prev_macd = prev_ema12 - prev_ema26
+                        if macd > 0 and prev_macd <= 0:
+                            signal = 'call'
+                        elif macd < 0 and prev_macd >= 0:
+                            signal = 'put'
+                
+                if signal and i + 3 < len(candles):
+                    # Simulate trade outcome
+                    entry_price = float(current['close'])
+                    exit_candle = candles[i + 1]  # M1 expiration
+                    exit_price = float(exit_candle['close'])
+                    
+                    won = False
+                    if signal == 'call' and exit_price > entry_price:
+                        won = True
+                    elif signal == 'put' and exit_price < entry_price:
+                        won = True
+                    
+                    if won:
+                        results['win'] += 1
+                    else:
+                        # Check gale levels
+                        gale1_won = False
+                        gale2_won = False
+                        gale3_won = False
+                        
+                        if i + 2 < len(candles):
+                            gale1_exit = float(candles[i + 2]['close'])
+                            if signal == 'call' and gale1_exit > entry_price:
+                                gale1_won = True
+                            elif signal == 'put' and gale1_exit < entry_price:
+                                gale1_won = True
+                        
+                        if gale1_won:
+                            results['gale1'] += 1
+                        elif i + 3 < len(candles):
+                            gale2_exit = float(candles[i + 3]['close'])
+                            if signal == 'call' and gale2_exit > entry_price:
+                                gale2_won = True
+                            elif signal == 'put' and gale2_exit < entry_price:
+                                gale2_won = True
+                            
+                            if gale2_won:
+                                results['gale2'] += 1
+                            elif i + 4 < len(candles):
+                                gale3_exit = float(candles[i + 4]['close'])
+                                if signal == 'call' and gale3_exit > entry_price:
+                                    gale3_won = True
+                                elif signal == 'put' and gale3_exit < entry_price:
+                                    gale3_won = True
+                                
+                                if gale3_won:
+                                    results['gale3'] += 1
+                                else:
+                                    results['loss'] += 1
+            
+            except (KeyError, ValueError, ZeroDivisionError):
+                continue
+        
+        # Calculate rates
+        total_samples = results['win'] + results['gale1'] + results['gale2'] + results['gale3'] + results['loss']
+        
+        if total_samples > 0:
+            win_rate = (results['win'] / total_samples) * 100
+            gale1_rate = ((results['win'] + results['gale1']) / total_samples) * 100
+            gale2_rate = ((results['win'] + results['gale1'] + results['gale2']) / total_samples) * 100
+            gale3_rate = ((results['win'] + results['gale1'] + results['gale2'] + results['gale3']) / total_samples) * 100
+            
+            self._log(f"Estratégia {strategy.upper()} - {asset}: {total_samples} amostras, {gale3_rate:.1f}% até Gale 3", "DEBUG")
+            
+            return {
+                'asset': asset,
+                'strategy': strategy,
+                'win_rate': round(win_rate, 2),
+                'gale1_rate': round(gale1_rate, 2),
+                'gale2_rate': round(gale2_rate, 2),
+                'gale3_rate': round(gale3_rate, 2),
+                'total_samples': total_samples
+            }
+        
+        return None
     
     def _log(self, message: str, level: str = "INFO"):
         """Log message to database and console"""

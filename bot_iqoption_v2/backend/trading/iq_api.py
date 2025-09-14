@@ -265,7 +265,8 @@ class IQOptionAPI:
                 # Use different timeframe approach: start with requested timeframe,
                 # then fallback to M1 if M5 fails on first attempt
                 # Prefer server timestamp when available and align to last closed candle
-                end_ts = int(self.get_server_timestamp()) - 2
+                server_ts = self.get_server_timestamp()
+                end_ts = int(server_ts) - 2
                 if actual_timeframe > 0:
                     end_ts = end_ts - (end_ts % actual_timeframe)
                 # Ensure ACTIVES mapping contains the asset before requesting candles

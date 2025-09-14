@@ -186,9 +186,15 @@ class CatalogAssetsSerializer(serializers.Serializer):
         choices=[
             ('mhi', 'MHI'),
             ('torres_gemeas', 'Torres Gêmeas'),
-            ('mhi_m5', 'MHI M5')
+            ('mhi_m5', 'MHI M5'),
+            ('rsi', 'RSI'),
+            ('moving_average', 'Moving Average'),
+            ('bollinger_bands', 'Bollinger Bands'),
+            ('engulfing', 'Engulfing'),
+            ('candlestick', 'Candlestick Patterns'),
+            ('macd', 'MACD')
         ],
-        default=['mhi', 'torres_gemeas', 'mhi_m5']
+        default=['mhi', 'torres_gemeas', 'mhi_m5', 'rsi', 'moving_average', 'bollinger_bands', 'engulfing', 'candlestick', 'macd']
     )
 
 

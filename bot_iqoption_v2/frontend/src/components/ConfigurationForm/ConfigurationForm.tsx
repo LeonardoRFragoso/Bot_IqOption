@@ -226,9 +226,12 @@ const ConfigurationForm: React.FC = () => {
                     <MenuItem value="mhi">MHI (3 Velas)</MenuItem>
                     <MenuItem value="torres_gemeas">Torres Gêmeas (1 Vela)</MenuItem>
                     <MenuItem value="mhi_m5">MHI M5 (5 Minutos)</MenuItem>
-                    <MenuItem value="rsi">RSI (Índice de Força Relativa)</MenuItem>
-                    <MenuItem value="moving_average">Moving Average (Cruzamento de Médias)</MenuItem>
-                    <MenuItem value="bollinger_bands">Bollinger Bands (Bandas de Bollinger)</MenuItem>
+                    <MenuItem value="rsi">RSI</MenuItem>
+                    <MenuItem value="moving_average">Moving Average</MenuItem>
+                    <MenuItem value="bollinger_bands">Bollinger Bands</MenuItem>
+                    <MenuItem value="engulfing">Engolfo (Engulfing)</MenuItem>
+                    <MenuItem value="candlestick">Padrões de Candlestick</MenuItem>
+                    <MenuItem value="macd">MACD</MenuItem>
                   </Select>
                 </FormControl>
               </Box>
@@ -426,6 +429,155 @@ const ConfigurationForm: React.FC = () => {
                       onChange={handleTextFieldChange('bb_timeframe')}
                       inputProps={{ step: 60, min: 60, max: 300 }}
                       helperText="60=M1, 300=M5"
+                    />
+                  </Box>
+                </Box>
+              </Stack>
+              <Divider sx={{ my: 4 }} />
+            </>
+          )}
+
+          {formData.default_strategy === 'engulfing' && (
+            <>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Configurações Engulfing
+              </Typography>
+              <Stack spacing={3}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Proporção Mínima do Corpo"
+                      type="number"
+                      value={formData.engulfing_min_body_ratio || 1.20}
+                      onChange={handleTextFieldChange('engulfing_min_body_ratio')}
+                      inputProps={{ step: 0.1, min: 1.0, max: 3.0 }}
+                      helperText="Corpo engolidor deve ser X vezes maior"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Velas de Confirmação"
+                      type="number"
+                      value={formData.engulfing_confirmation_candles || 1}
+                      onChange={handleTextFieldChange('engulfing_confirmation_candles')}
+                      inputProps={{ step: 1, min: 1, max: 5 }}
+                      helperText="Número de velas para confirmar padrão"
+                    />
+                  </Box>
+                </Box>
+              </Stack>
+              <Divider sx={{ my: 4 }} />
+            </>
+          )}
+
+          {formData.default_strategy === 'candlestick' && (
+            <>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Configurações Padrões de Candlestick
+              </Typography>
+              <Stack spacing={3}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Threshold do Corpo"
+                      type="number"
+                      value={formData.cs_body_threshold || 0.30}
+                      onChange={handleTextFieldChange('cs_body_threshold')}
+                      inputProps={{ step: 0.05, min: 0.1, max: 0.8 }}
+                      helperText="Tamanho mínimo do corpo (% da vela)"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Proporção da Sombra"
+                      type="number"
+                      value={formData.cs_shadow_ratio || 2.00}
+                      onChange={handleTextFieldChange('cs_shadow_ratio')}
+                      inputProps={{ step: 0.1, min: 1.0, max: 5.0 }}
+                      helperText="Sombra deve ser X vezes maior que corpo"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Threshold Doji"
+                      type="number"
+                      value={formData.cs_doji_threshold || 0.10}
+                      onChange={handleTextFieldChange('cs_doji_threshold')}
+                      inputProps={{ step: 0.01, min: 0.01, max: 0.3 }}
+                      helperText="Tamanho máximo do corpo para Doji"
+                    />
+                  </Box>
+                </Box>
+              </Stack>
+              <Divider sx={{ my: 4 }} />
+            </>
+          )}
+
+          {formData.default_strategy === 'macd' && (
+            <>
+              <Typography variant="h6" sx={{ mb: 2 }}>
+                Configurações MACD
+              </Typography>
+              <Stack spacing={3}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Timeframe (seg)"
+                      type="number"
+                      value={formData.macd_timeframe || 60}
+                      onChange={handleTextFieldChange('macd_timeframe')}
+                      inputProps={{ step: 60, min: 60, max: 300 }}
+                      helperText="60=M1, 300=M5"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Período EMA Rápida"
+                      type="number"
+                      value={formData.macd_fast_period || 12}
+                      onChange={handleTextFieldChange('macd_fast_period')}
+                      inputProps={{ step: 1, min: 5, max: 30 }}
+                      helperText="Período da EMA rápida"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Período EMA Lenta"
+                      type="number"
+                      value={formData.macd_slow_period || 26}
+                      onChange={handleTextFieldChange('macd_slow_period')}
+                      inputProps={{ step: 1, min: 15, max: 50 }}
+                      helperText="Período da EMA lenta"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Período Linha de Sinal"
+                      type="number"
+                      value={formData.macd_signal_period || 9}
+                      onChange={handleTextFieldChange('macd_signal_period')}
+                      inputProps={{ step: 1, min: 5, max: 20 }}
+                      helperText="Período da linha de sinal"
+                    />
+                  </Box>
+                  <Box sx={{ flex: '1 1 200px', minWidth: '200px' }}>
+                    <TextField
+                      fullWidth
+                      label="Threshold Histograma"
+                      type="number"
+                      value={formData.macd_min_histogram || 0.00001}
+                      onChange={handleTextFieldChange('macd_min_histogram')}
+                      inputProps={{ step: 0.00001, min: 0.00001, max: 0.001 }}
+                      helperText="Valor mínimo do histograma"
                     />
                   </Box>
                 </Box>
