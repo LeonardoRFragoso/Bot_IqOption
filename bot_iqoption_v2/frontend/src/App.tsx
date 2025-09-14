@@ -12,6 +12,11 @@ import Trading from './pages/Trading/Trading';
 import Analysis from './pages/Analysis/Analysis';
 import History from './pages/History/History';
 import Settings from './pages/Settings/Settings';
+import Charts from './pages/Charts/Charts';
+import Account from './pages/Account/Account';
+import Notifications from './pages/Notifications/Notifications';
+import Pay from './pages/Pay/Pay';
+import AdminBilling from './pages/AdminBilling/AdminBilling';
 
 function App() {
   return (
@@ -24,14 +29,16 @@ function App() {
   );
 }
 
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
-  
+const ProtectedRoute: React.FC<{ children: React.ReactNode; requireSubscription?: boolean }> = ({ children, requireSubscription = true }) => {
+  const { isAuthenticated, loading, isSubscribed } = useAuth();
+
   if (loading) {
     return <div>Carregando...</div>;
   }
-  
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
+
+  if (!isAuthenticated) return <Navigate to="/login" />;
+  if (requireSubscription && !isSubscribed) return <Navigate to="/pay" />;
+  return <>{children}</>;
 };
 
 const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -110,6 +117,54 @@ const AppRoutes: React.FC = () => {
                 <ProtectedRoute>
                   <AppLayout>
                     <Settings />
+                  </AppLayout>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/charts" 
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <Charts />
+                  </AppLayout>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/account" 
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <Account />
+                  </AppLayout>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/notifications" 
+              element={
+                <ProtectedRoute>
+                  <AppLayout>
+                    <Notifications />
+                  </AppLayout>
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/pay" 
+              element={
+                <ProtectedRoute requireSubscription={false}>
+                  <Pay />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/admin/billing" 
+              element={
+                <ProtectedRoute requireSubscription={false}>
+                  <AppLayout>
+                    <AdminBilling />
                   </AppLayout>
                 </ProtectedRoute>
               } 

@@ -12,7 +12,7 @@ import {
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import type { TradingSession } from '../../types/index';
-import { useDashboard, useOperations } from '../../hooks/useApi';
+import { useDashboard } from '../../hooks/useApi';
 import TradingControlPanel from '../../components/TradingControlPanel/TradingControlPanel';
 import OperationsTable from '../../components/OperationsTable/OperationsTable';
 import MarketStatus from '../../components/MarketStatus/MarketStatus';
@@ -21,14 +21,16 @@ import PerformanceChart from '../../components/Charts/PerformanceChart';
 import OperationsDistributionChart from '../../components/Charts/OperationsDistributionChart';
 import StrategyPerformanceChart from '../../components/Charts/StrategyPerformanceChart';
 import AssetAnalysisResults from '../../components/AssetAnalysisResults/AssetAnalysisResults';
+import { useTradingRealtime } from '../../hooks/useRealtime';
+import type { Operation } from '../../types/index';
 
 const Dashboard: React.FC = () => {
   // Use hooks with optimized polling
-  const { data: dashboardData, loading, error } = useDashboard();
-  const { data: operations } = useOperations();
+  const { data: dashboardData, loading, error, refetch: refetchDashboard } = useDashboard();
+  const { socket, connected } = useTradingRealtime();
+  const [liveOps, setLiveOps] = useState<Map<string, Operation>>(new Map());
+  const [opsRefreshSignal, setOpsRefreshSignal] = useState<number>(0);
   
-  // Use operations and logs data to prevent lint warnings
-  console.debug('Operations data:', operations?.length || 0, 'items');
   const [currentSession, setCurrentSession] = useState<TradingSession | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<string>('');
 
@@ -40,6 +42,110 @@ const Dashboard: React.FC = () => {
       setCurrentSession(null);
     }
   }, [dashboardData]);
+
+  // Helper to convert WS payloads to Operation with safe defaults
+  const toOperation = (obj: any): Operation | null => {
+    try {
+      if (!obj) return null;
+      const id = String(obj.id ?? obj.order_id ?? obj.iq_order_id ?? '');
+      if (!id) return null;
+      const createdAt = obj.created_at || new Date().toISOString();
+      const strategy = (currentSession as any)?.strategy || obj.strategy_used || '—';
+      return {
+        id: id as unknown as any,
+        session: Number(obj.session) || (currentSession?.id ?? 0),
+        asset: String(obj.asset || obj.symbol || '—'),
+        direction: (obj.direction === 'call' || obj.direction === 'put') ? obj.direction : 'call',
+        amount: Number(obj.amount ?? obj.value ?? 0),
+        expiration_time: Number(obj.expiration_time ?? 0),
+        entry_price: Number(obj.entry_price ?? 0),
+        exit_price: typeof obj.exit_price === 'number' ? obj.exit_price : undefined,
+        result: obj.result === 'win' || obj.result === 'loss' ? obj.result : undefined,
+        profit_loss: typeof obj.profit_loss === 'number' ? obj.profit_loss : undefined,
+        strategy_used: String(strategy),
+        martingale_level: Number(obj.martingale_level ?? 0),
+        soros_level: Number(obj.soros_level ?? 0),
+        created_at: String(createdAt),
+        closed_at: obj.closed_at ? String(obj.closed_at) : undefined,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  // Subscribe to WS events to keep KPIs and operations up-to-date
+  useEffect(() => {
+    const onStatus = (msg: any) => {
+      const data = msg?.data || {};
+      try {
+        const session = data.active_session;
+        if (session && typeof session === 'object') {
+          setCurrentSession((prev) => ({ ...(prev as any), ...session }));
+        }
+        if (Array.isArray(data.recent_operations)) {
+          setLiveOps((prev) => {
+            const map = new Map(prev);
+            for (const raw of data.recent_operations) {
+              const op = toOperation(raw);
+              if (op) map.set(String(op.id), op);
+            }
+            return map;
+          });
+        }
+        // Ensure KPIs refresh while connected
+        try { refetchDashboard(); } catch {}
+      } catch {}
+    };
+    const onOpUpdate = (msg: any) => {
+      const raw = msg?.data || msg;
+      const op = toOperation(raw);
+      if (!op) return;
+      setLiveOps((prev) => {
+        const map = new Map(prev);
+        map.set(String(op.id), op);
+        return map;
+      });
+      // KPI refresh on operation update (especially when finalized)
+      try { refetchDashboard(); } catch {}
+      setOpsRefreshSignal((s) => s + 1);
+    };
+    const onSessionUpdate = (msg: any) => {
+      const data = msg?.data || {};
+      if (data) {
+        try { refetchDashboard(); } catch {}
+        setOpsRefreshSignal((s) => s + 1);
+      }
+    };
+    const onTradingUpdate = () => {
+      try { refetchDashboard(); } catch {}
+    };
+    const onLogs = () => {
+      // no-op for now
+    };
+
+    socket.on('status_update', onStatus);
+    socket.on('operation_update', onOpUpdate);
+    socket.on('session_update', onSessionUpdate);
+    socket.on('trading_update', onTradingUpdate);
+    socket.on('logs_update', onLogs);
+    return () => {
+      socket.off('status_update', onStatus);
+      socket.off('operation_update', onOpUpdate);
+      socket.off('session_update', onSessionUpdate);
+      socket.off('trading_update', onTradingUpdate);
+      socket.off('logs_update', onLogs);
+    };
+  }, [socket, refetchDashboard, currentSession]);
+
+  // Fallback: adaptive short polling when WS is disconnected but session is running
+  useEffect(() => {
+    if (!currentSession || (currentSession as any).status !== 'RUNNING' || connected) return;
+    const interval = setInterval(() => {
+      try { refetchDashboard(); } catch {}
+      setOpsRefreshSignal((s) => s + 1);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [currentSession, connected, refetchDashboard]);
 
   const handleSessionChange = (session: TradingSession | null) => {
     setCurrentSession(session);
@@ -195,7 +301,12 @@ const Dashboard: React.FC = () => {
             gap: 3 
           }}>
             {/* OperationsTable already provides its own Card and header */}
-            <OperationsTable sessionId={currentSession?.id} maxRows={10} />
+            <OperationsTable 
+              sessionId={currentSession?.id} 
+              maxRows={10}
+              liveOperations={Array.from(liveOps.values())}
+              refreshSignal={opsRefreshSignal}
+            />
 
             {/* StrategyPerformanceChart already provides its own Card and header */}
             <StrategyPerformanceChart 

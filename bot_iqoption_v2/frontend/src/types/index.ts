@@ -45,7 +45,7 @@ export interface TradingConfiguration {
 }
 
 export interface TradingSession {
-  id: number;
+  id: string | number;
   user: number;
   status: 'STOPPED' | 'RUNNING' | 'PAUSED' | 'ERROR';
   strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5';
@@ -64,15 +64,15 @@ export interface TradingSession {
 }
 
 export interface Operation {
-  id: number;
-  session: number;
+  id: string | number;
+  session: string | number;
   asset: string;
   direction: 'call' | 'put';
   amount: number;
   expiration_time: number;
   entry_price: number;
   exit_price?: number;
-  result?: 'win' | 'loss';
+  result?: 'win' | 'loss' | 'draw' | 'pending';
   profit_loss?: number;
   strategy_used: string;
   martingale_level: number;
@@ -169,4 +169,39 @@ export interface RegisterResponse {
 export interface IQOptionCredentials {
   iq_email: string;
   iq_password: string;
+}
+
+// Billing / Subscription types
+export interface SubscriptionStatus {
+  is_subscribed: boolean;
+  active_until?: string | null;
+  preference_id?: string;
+  init_point?: string;
+  public_key?: string;
+}
+
+export interface AdminUserSubscriptionInfo {
+  id: number;
+  email: string;
+  username: string;
+  first_name: string;
+  last_name: string;
+  is_subscribed: boolean;
+  active_until?: string | null;
+  date_joined: string;
+}
+
+export interface PaymentRecord {
+  id: number;
+  user: number;
+  user_email: string;
+  mp_payment_id: string;
+  mp_preference_id?: string;
+  external_reference?: string;
+  status: string;
+  amount: number;
+  currency: string;
+  description: string;
+  paid_at?: string;
+  created_at: string;
 }

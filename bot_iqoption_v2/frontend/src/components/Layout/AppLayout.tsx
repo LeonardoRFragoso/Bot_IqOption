@@ -39,7 +39,10 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     '/dashboard': 'dashboard',
     '/trading': 'trading',
     '/analysis': 'analytics',
+    '/charts': 'charts',
     '/history': 'history',
+    '/account': 'account',
+    '/notifications': 'notifications',
     '/settings': 'settings',
   };
 

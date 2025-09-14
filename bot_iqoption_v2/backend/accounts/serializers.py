@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
-from .models import User, TradingConfiguration
+from .models import User, TradingConfiguration, Notification
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -98,6 +98,10 @@ class TradingConfigurationSerializer(serializers.ModelSerializer):
             'analise_medias', 'velas_medias', 'tipo_par',
             'martingale_usar', 'martingale_niveis', 'martingale_fator',
             'soros_usar', 'soros_niveis', 'default_strategy',
+            # Torres Gêmeas params (optional)
+            'torres_event_driven', 'torres_event_cooldown_sec',
+            'torres_timeframe', 'torres_lookback',
+            'torres_tolerancia_pct', 'torres_break_buffer_pct',
             'created_at', 'updated_at'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
@@ -126,3 +130,31 @@ class TradingConfigurationSerializer(serializers.ModelSerializer):
         if value < 0 or value > 10:
             raise serializers.ValidationError("Níveis de Soros devem estar entre 0 e 10.")
         return value
+
+    def validate_torres_event_cooldown_sec(self, value):
+        if value < 0 or value > 600:
+            raise serializers.ValidationError("Cooldown deve estar entre 0 e 600 segundos.")
+        return value
+
+    def validate_torres_timeframe(self, value):
+        if value not in (60, 300):
+            # Mantemos simples: 60s (M1) ou 300s (M5)
+            raise serializers.ValidationError("Timeframe deve ser 60 (M1) ou 300 (M5).")
+        return value
+
+    def validate_torres_lookback(self, value):
+        if value < 20 or value > 200:
+            raise serializers.ValidationError("Lookback deve estar entre 20 e 200.")
+        return value
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Serializer for notifications"""
+    
+    class Meta:
+        model = Notification
+        fields = (
+            'id', 'type', 'category', 'title', 'message', 
+            'read', 'created_at', 'updated_at'
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')

@@ -2,10 +2,7 @@ import json
 import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from django.contrib.auth import get_user_model
 from .models import TradingSession, Operation, TradingLog
-
-User = get_user_model()
 
 
 class TradingConsumer(AsyncWebsocketConsumer):
@@ -124,16 +121,30 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 session__user=self.user
             ).order_by('-created_at')[:10]
             
-            return [{
-                'id': str(op.id),
-                'asset': op.asset,
-                'direction': op.direction,
-                'amount': float(op.amount),
-                'result': op.result,
-                'profit_loss': float(op.profit_loss) if op.profit_loss else 0,
-                'martingale_level': op.martingale_level,
-                'created_at': op.created_at.isoformat()
-            } for op in operations]
+            data = []
+            for op in operations:
+                try:
+                    mapping = {
+                        'ENTRY': 0,
+                        'GALE1': 1,
+                        'GALE2': 2,
+                        'GALE3': 3,
+                    }
+                    data.append({
+                        'id': str(op.id),
+                        'session': str(op.session_id),
+                        'asset': op.asset,
+                        'direction': str(op.direction or '').lower(),
+                        'amount': float(op.entry_value) if op.entry_value is not None else 0.0,
+                        'result': str(op.result or '').lower(),
+                        'profit_loss': float(op.profit_loss) if op.profit_loss is not None else 0.0,
+                        'martingale_level': mapping.get(str(op.operation_type).upper(), 0),
+                        'created_at': op.created_at.isoformat(),
+                    })
+                except Exception:
+                    # Skip any malformed record to avoid breaking the whole list
+                    continue
+            return data
         except Exception:
             return []
     

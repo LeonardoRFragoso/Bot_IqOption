@@ -1,9 +1,7 @@
 from django.db import models
-from django.contrib.auth import get_user_model
+from django.conf import settings
 from decimal import Decimal
 import uuid
-
-User = get_user_model()
 
 
 class TradingSession(models.Model):
@@ -17,7 +15,7 @@ class TradingSession(models.Model):
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='trading_sessions')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='trading_sessions')
     
     # Session info
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='STOPPED')
@@ -121,7 +119,7 @@ class Operation(models.Model):
 class AssetCatalog(models.Model):
     """Model to store asset analysis results"""
     
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='asset_catalogs')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='asset_catalogs')
     
     # Asset info
     asset = models.CharField(max_length=20)
@@ -208,7 +206,7 @@ class TradingLog(models.Model):
         null=True, 
         blank=True
     )
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='trading_logs')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='trading_logs')
     
     level = models.CharField(max_length=10, choices=LOG_LEVELS, default='INFO')
     message = models.TextField()

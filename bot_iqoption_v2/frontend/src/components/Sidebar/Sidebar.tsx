@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Drawer,
@@ -25,6 +25,7 @@ import {
   Notifications as NotificationsIcon,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
+import { apiService } from '../../services/api';
 
 interface SidebarProps {
   open: boolean;
@@ -41,7 +42,7 @@ interface MenuItem {
   badge?: number;
 }
 
-const menuItems: MenuItem[] = [
+const getMenuItems = (notificationCount: number): MenuItem[] => [
   {
     id: 'dashboard',
     label: 'Dashboard',
@@ -83,7 +84,7 @@ const menuItems: MenuItem[] = [
     label: 'Notifications',
     icon: <NotificationsIcon />,
     path: '/notifications',
-    badge: 3,
+    badge: notificationCount > 0 ? notificationCount : undefined,
   },
   {
     id: 'settings',
@@ -101,6 +102,27 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    const fetchNotificationCount = async () => {
+      try {
+        const count = await apiService.getNotificationCount();
+        setUnreadCount(count.unread);
+      } catch (error) {
+        console.error('Erro ao buscar contagem de notificações:', error);
+      }
+    };
+
+    fetchNotificationCount();
+    
+    // Atualizar a cada 30 segundos
+    const interval = setInterval(fetchNotificationCount, 30000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  const menuItems = getMenuItems(unreadCount);
 
   const drawerWidth = 280;
   const collapsedWidth = 72;
@@ -142,9 +164,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        background: 'linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+        backgroundColor: '#1A1A1A',
         color: 'white',
         overflow: 'hidden',
+        border: '1px solid #333333',
       }}
     >
       {/* Header */}
@@ -155,7 +178,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           justifyContent: 'space-between',
           p: 2,
           minHeight: 64,
-          borderBottom: '1px solid rgba(255, 255, 255, 0.12)',
+          borderBottom: '1px solid #333333',
         }}
       >
         <AnimatePresence>
@@ -170,7 +193,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 variant="h6"
                 sx={{
                   fontWeight: 'bold',
-                  background: 'linear-gradient(45deg, #64b5f6, #42a5f5)',
+                  background: 'linear-gradient(45deg, #FFD700, #FFA000)',
                   backgroundClip: 'text',
                   WebkitBackgroundClip: 'text',
                   WebkitTextFillColor: 'transparent',
@@ -187,7 +210,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           sx={{
             color: 'white',
             '&:hover': {
-              backgroundColor: 'rgba(255, 255, 255, 0.08)',
+              backgroundColor: 'rgba(255, 215, 0, 0.1)',
             },
           }}
         >
@@ -214,11 +237,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                     minHeight: 48,
                     px: open ? 2 : 1.5,
                     justifyContent: open ? 'initial' : 'center',
+                    position: 'relative',
                     '&.Mui-selected': {
-                      backgroundColor: 'rgba(25, 118, 210, 0.2)',
-                      borderLeft: '3px solid #1976d2',
+                      backgroundColor: 'rgba(255, 215, 0, 0.15)',
+                      borderLeft: '3px solid #FFD700',
                       '&:hover': {
-                        backgroundColor: 'rgba(25, 118, 210, 0.25)',
+                        backgroundColor: 'rgba(255, 215, 0, 0.2)',
                       },
                     },
                     '&:hover': {
@@ -231,7 +255,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       minWidth: 0,
                       mr: open ? 2 : 'auto',
                       justifyContent: 'center',
-                      color: currentPage === item.id ? '#64b5f6' : 'rgba(255, 255, 255, 0.7)',
+                      color: currentPage === item.id ? '#FFD700' : 'rgba(255, 255, 255, 0.7)',
                       transition: 'color 0.2s ease',
                     }}
                   >
@@ -245,11 +269,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: -10 }}
                         transition={{ duration: 0.2 }}
-                        style={{ width: '100%' }}
+                        style={{ 
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between'
+                        }}
                       >
                         <ListItemText
                           primary={item.label}
                           sx={{
+                            flex: 1,
                             '& .MuiListItemText-primary': {
                               fontSize: '0.9rem',
                               fontWeight: currentPage === item.id ? 600 : 400,
@@ -261,16 +291,19 @@ const Sidebar: React.FC<SidebarProps> = ({
                         {item.badge && (
                           <Box
                             sx={{
-                              backgroundColor: '#f44336',
+                              backgroundColor: '#FF1744',
                               color: 'white',
                               borderRadius: '50%',
-                              minWidth: 20,
-                              height: 20,
+                              minWidth: 18,
+                              height: 18,
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              fontSize: '0.75rem',
+                              fontSize: '0.7rem',
                               fontWeight: 'bold',
+                              boxShadow: '0 2px 6px rgba(255, 23, 68, 0.5)',
+                              border: '1px solid rgba(255, 23, 68, 0.6)',
+                              flexShrink: 0,
                             }}
                           >
                             {item.badge}
@@ -279,6 +312,32 @@ const Sidebar: React.FC<SidebarProps> = ({
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  
+                  {/* Badge for collapsed state */}
+                  {!open && item.badge && (
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        backgroundColor: '#FF1744',
+                        color: 'white',
+                        borderRadius: '50%',
+                        minWidth: 16,
+                        height: 16,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.65rem',
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 6px rgba(255, 23, 68, 0.5)',
+                        border: '1px solid rgba(255, 23, 68, 0.6)',
+                        zIndex: 1,
+                      }}
+                    >
+                      {item.badge}
+                    </Box>
+                  )}
                 </ListItemButton>
               </motion.div>
             </ListItem>
@@ -290,7 +349,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       <Box
         sx={{
           p: 2,
-          borderTop: '1px solid rgba(255, 255, 255, 0.12)',
+          borderTop: '1px solid #333333',
         }}
       >
         <AnimatePresence>

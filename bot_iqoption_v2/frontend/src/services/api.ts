@@ -13,7 +13,10 @@ import type {
   TradingLog,
   ApiResponse,
   AssetCatalog,
-  DashboardData
+  DashboardData,
+  SubscriptionStatus,
+  AdminUserSubscriptionInfo,
+  PaymentRecord
 } from '../types/index';
 
 class ApiService {
@@ -249,6 +252,69 @@ class ApiService {
     const response: AxiosResponse<{ payouts: Array<{ asset: string; binary: number; turbo: number; digital: number }> }> =
       await this.api.post('/trading/payouts/', { assets, account_type });
     return response.data.payouts;
+  }
+
+  // Billing methods
+  async getSubscriptionStatus(): Promise<SubscriptionStatus> {
+    const response: AxiosResponse<SubscriptionStatus> = await this.api.get('/billing/status/');
+    return response.data;
+  }
+
+  async verifyPaymentReturn(params: Record<string, string | null | undefined>): Promise<{ success: boolean; activated?: boolean; status?: string; active_until?: string; error?: string }> {
+    // Build query string from params
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v != null) query.append(k, String(v));
+    });
+    const url = `/billing/verify-return/?${query.toString()}`;
+    const response: AxiosResponse<{ success: boolean; activated?: boolean; status?: string; active_until?: string; error?: string }> = await this.api.get(url);
+    return response.data;
+  }
+
+  async getBillingAdminUsers(): Promise<AdminUserSubscriptionInfo[]> {
+    const response: AxiosResponse<AdminUserSubscriptionInfo[]> = await this.api.get('/billing/admin/users/');
+    return response.data;
+  }
+
+  async getBillingAdminPayments(): Promise<PaymentRecord[]> {
+    const response: AxiosResponse<PaymentRecord[]> = await this.api.get('/billing/admin/payments/');
+    return response.data;
+  }
+
+  async grantSubscriptionDays(user_id: number, days: number = 30): Promise<{ success: boolean; active_until?: string; error?: string }> {
+    const response: AxiosResponse<{ success: boolean; active_until?: string; error?: string }> = await this.api.post('/billing/admin/grant/', { user_id, days });
+    return response.data;
+  }
+
+  // Notification methods
+  async getNotifications(): Promise<any[]> {
+    const response: AxiosResponse<any[]> = await this.api.get('/auth/notifications/');
+    return response.data;
+  }
+
+  async getNotificationCount(): Promise<{ total: number; unread: number }> {
+    const response: AxiosResponse<{ total: number; unread: number }> = await this.api.get('/auth/notifications/count/');
+    return response.data;
+  }
+
+  async markNotificationRead(notificationId: string): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.put(`/auth/notifications/${notificationId}/read/`);
+    return response.data;
+  }
+
+  async markAllNotificationsRead(): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.post('/auth/notifications/mark-all-read/');
+    return response.data;
+  }
+
+  async deleteNotification(notificationId: string): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.delete(`/auth/notifications/${notificationId}/delete/`);
+    return response.data;
+  }
+
+  async clearAllNotifications(): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.delete('/auth/notifications/clear-all/');
+    return response.data;
   }
 
   // Utility methods

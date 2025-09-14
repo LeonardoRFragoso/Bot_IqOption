@@ -9,6 +9,7 @@ import threading
 import time
 
 from .models import TradingSession, Operation, AssetCatalog, TradingLog, MarketData
+from billing.permissions import HasActiveSubscription
 from .serializers import (
     TradingSessionSerializer, OperationSerializer, AssetCatalogSerializer,
     TradingLogSerializer, StartTradingSerializer, StopTradingSerializer,
@@ -86,7 +87,7 @@ class TradingSessionDetailView(generics.RetrieveAPIView):
 
 
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated, HasActiveSubscription])
 def start_trading(request):
     """Start a new trading session"""
     
@@ -167,7 +168,7 @@ def start_trading(request):
 
 
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated, HasActiveSubscription])
 def pause_trading(request):
     """Pause active trading session"""
     
@@ -199,7 +200,7 @@ def pause_trading(request):
 
 
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated, HasActiveSubscription])
 def resume_trading(request):
     """Resume paused trading session"""
     
@@ -264,7 +265,7 @@ def resume_trading(request):
 
 
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated, HasActiveSubscription])
 def stop_trading(request):
     """Stop active trading session"""
     
@@ -341,7 +342,7 @@ def get_active_session(request):
 
 
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([permissions.IsAuthenticated, HasActiveSubscription])
 def catalog_assets(request):
     """Catalog assets for strategies"""
     

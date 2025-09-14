@@ -143,8 +143,8 @@ export function useTradingConfig() {
 }
 
 // Hook for operations - Smart polling enabled with conservative interval
-export function useOperations(sessionId?: number) {
-  const operationsApiCall = useCallback(() => apiService.getOperations(sessionId), [sessionId]);
+export function useOperations(sessionId?: string | number) {
+  const operationsApiCall = useCallback(() => apiService.getOperations(sessionId as any), [sessionId]);
   return useApi(
     operationsApiCall,
     { 

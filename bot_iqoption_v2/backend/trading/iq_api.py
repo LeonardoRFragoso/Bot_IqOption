@@ -43,6 +43,8 @@ class IQOptionAPI:
         self._last_effective_option_type: Optional[str] = None
         # Map each order_id to the effective option type actually used ('digital' or 'binary')
         self._order_type_by_id: Dict[str, str] = {}
+        # Lightweight payout cache: asset -> (payouts dict, ts)
+        self._payout_cache: Dict[str, Tuple[Dict[str, float], float]] = {}
         
     def connect(self) -> Tuple[bool, str]:
         """Connect to IQ Option platform"""
@@ -183,6 +185,10 @@ class IQOptionAPI:
         
         try:
             with self._api_lock:
+                # Double check API is still valid before calling
+                if not self.api:
+                    self.connected = False
+                    return 0.0
                 return float(self.api.get_balance())
         except Exception as e:
             self._log_message(f"Erro ao obter saldo: {str(e)}", "ERROR")
@@ -195,6 +201,10 @@ class IQOptionAPI:
         
         try:
             with self._api_lock:
+                # Double check API is still valid before calling
+                if not self.api:
+                    self.connected = False
+                    return None
                 return self.api.get_profile_ansyc()
         except Exception as e:
             self._log_message(f"Erro ao obter perfil: {str(e)}", "ERROR")
@@ -218,6 +228,10 @@ class IQOptionAPI:
                 return False
             with self._api_lock:
                 try:
+                    # Double check API is still valid before calling
+                    if not self.api:
+                        self.connected = False
+                        return False
                     self.api.update_ACTIVES_OPCODE()
                 except Exception:
                     pass
@@ -257,6 +271,10 @@ class IQOptionAPI:
                 try:
                     if asset not in IQC.ACTIVES:
                         with self._api_lock:
+                            # Double check API is still valid before calling
+                            if not self.api:
+                                self.connected = False
+                                continue
                             self.api.update_ACTIVES_OPCODE()
                     if asset not in IQC.ACTIVES:
                         self._log_message(f"Ativo sem mapeamento ACTIVES: {asset} - pulando get_candles", "DEBUG")
@@ -264,6 +282,10 @@ class IQOptionAPI:
                 except Exception:
                     pass
                 with self._api_lock:
+                    # Double check API is still valid before calling
+                    if not self.api:
+                        self.connected = False
+                        return None
                     candles = self.api.get_candles(asset, actual_timeframe, count * count_multiplier, end_ts)
                 
                 # More robust validation (only require fields we actually use)
@@ -320,6 +342,10 @@ class IQOptionAPI:
             # Wrap the API call in additional error handling
             try:
                 with self._api_lock:
+                    # Double check API is still valid before calling
+                    if not self.api:
+                        self.connected = False
+                        return self._get_fallback_assets()
                     all_assets = self.api.get_all_open_time()
             except Exception as api_error:
                 # Log only for debugging purposes, not as error since fallback works
@@ -674,8 +700,21 @@ class IQOptionAPI:
         
         try:
             with self._api_lock:
-                profit = self.api.get_all_profit()
-                all_assets = self.api.get_all_open_time()
+                # Double check API is still valid before calling
+                if not self.api:
+                    self.connected = False
+                    return {'binary': 0, 'turbo': 0, 'digital': 0}
+                try:
+                    profit = self.api.get_all_profit()
+                    all_assets = self.api.get_all_open_time()
+                except Exception as vend_e:
+                    # Vendor can raise transient errors during init (e.g., get_all_init_v2 late ...)
+                    # Return safe fallback to avoid breaking strategies
+                    self._log_message(
+                        f"Falha vendor ao obter profit/open_time para {asset}: {str(vend_e)} — aplicando fallback padrão (80/80)",
+                        "WARNING"
+                    )
+                    return {'binary': 80, 'turbo': 0, 'digital': 80}
             
             result = {'binary': 0, 'turbo': 0, 'digital': 0}
             
@@ -708,6 +747,10 @@ class IQOptionAPI:
                     if act_id is None:
                         try:
                             with self._api_lock:
+                                # Double check API is still valid before calling
+                                if not self.api:
+                                    self.connected = False
+                                    continue
                                 self.api.update_ACTIVES_OPCODE()
                             act_id = IQC.ACTIVES.get(sym)
                         except Exception:
@@ -848,16 +891,46 @@ class IQOptionAPI:
             # Se nenhum payout foi determinado, usar fallback padrão para evitar zeros silenciosos
             if result['binary'] == 0 and result['digital'] == 0:
                 self._log_message(f"Payouts indisponíveis para {asset}, aplicando fallback padrão (binary/digital=80%)", "DEBUG")
-                return {'binary': 80, 'turbo': 0, 'digital': 80}
-            
+                fb = {'binary': 80, 'turbo': 0, 'digital': 80}
+                try:
+                    self._payout_cache[str(asset).upper()] = (dict(fb), time.time())
+                except Exception:
+                    pass
+                return fb
+            # Cachear resultado obtido
+            try:
+                self._payout_cache[str(asset).upper()] = (dict(result), time.time())
+            except Exception:
+                pass
             return result
             
         except Exception as e:
-            # Silenciar erros conhecidos de 'underlying' para evitar spam nos logs
+            # Silenciar erros conhecidos de 'underlying' e degradar 'NoneType' como transiente
             error_msg = str(e).lower()
-            if 'underlying' not in error_msg:
+            if 'underlying' in error_msg:
+                # Quiet these to avoid noise
+                pass
+            elif 'nonetype' in error_msg:
+                self._log_message(
+                    f"Payout vendor transiente (NoneType) para {asset}. Aplicando fallback padrão (80/80). Detalhe: {str(e)}",
+                    "WARNING"
+                )
+            else:
                 self._log_message(f"Erro geral ao obter payout para {asset}: {str(e)}", "ERROR")
             return {'binary': 80, 'turbo': 0, 'digital': 80}  # Default payout, TURBO desativado
+    
+    def get_payout_cached(self, asset: str, ttl: int = 180) -> Optional[Dict[str, float]]:
+        """Return cached payout if fresh, else None. Avoids heavy vendor calls in time-critical paths."""
+        try:
+            key = str(asset).upper()
+            cached = self._payout_cache.get(key)
+            if cached and isinstance(cached, tuple) and len(cached) == 2:
+                data, ts = cached
+                if isinstance(data, dict) and (time.time() - ts) <= ttl:
+                    return dict(data)
+        except Exception:
+            pass
+        return None
     
     def buy_option(self, asset: str, amount: float, direction: str, expiration: int, option_type: str = 'binary') -> Tuple[bool, Optional[str]]:
         """Place a buy order"""
@@ -921,20 +994,13 @@ class IQOptionAPI:
             # Worker to perform the blocking buy call
             result_holder = {'done': False, 'success': False, 'order_id': None, 'error': None}
 
-            # Guardar para não enviar DIGITAL no último segundo da vela (reduz timeouts do provedor)
-            if option_type == 'digital':
-                try:
-                    st = self.get_server_timestamp()
-                    rem = 60.0 - (float(st) % 60.0)
-                    if str(expiration).strip() in ('1', '1.0') and rem < 2.0:
-                        wait_for = max(0.0, 2.1 - rem)
-                        self._log_message(f"Esperando {wait_for:.2f}s pela virada do minuto antes de enviar ordem digital...", "DEBUG")
-                        time.sleep(wait_for)
-                except Exception:
-                    pass
+            # Não atrasar envio digital M1 na virada — priorizar execução imediata
+            # Mantemos apenas o FAST PATH já aplicado acima; nenhuma espera adicional aqui
 
             def _buy_worker():
                 try:
+                    # Evitar tentar fallback binary múltiplas vezes quando o ativo está suspenso
+                    binary_suspended_local = False
                     if option_type == 'digital':
                         # Construir instrument_id e enviar via websocket sem bloquear indefinidamente
                         action = 'P' if direction == 'put' else 'C'
@@ -943,16 +1009,14 @@ class IQOptionAPI:
                         # Evitar borda de minuto para 1m (ACK pode falhar quando muito próximo do flip)
                         if int(expiration) == 1:
                             try:
+                                # Não aguardar 2s no início da vela; priorizar envio imediato no M1
+                                # Apenas computa 'rem' se precisar para diagnósticos (sem sleep)
                                 rem = (60 - (ts % 60)) % 60
-                                if rem < 2:
-                                    self._log_message("Aguardando 2s para evitar borda de minuto (digital 1m)", "DEBUG")
-                                    time.sleep(2.2)
-                                    ts = int(self.get_server_timestamp())
                             except Exception:
                                 pass
-                        # Garantir que o ativo está mapeado no vendor (necessário para cotações digitais)
+                        # Evitar chamada pesada de mapeamento no caminho crítico
                         try:
-                            self.ensure_active_mapping(asset)
+                            pass
                         except Exception:
                             pass
                         if int(expiration) == 1:
@@ -966,11 +1030,9 @@ class IQOptionAPI:
                             exp = time.mktime(now_date.timetuple())
                         date_formatted = datetime.utcfromtimestamp(exp).strftime("%Y%m%d%H%M")
                         instrument_id = f"do{asset}{date_formatted}PT{int(expiration)}M{action}SPT"
-                        # Pré-aquecimento: assinar lista de strikes para reduzir latência do provedor
+                        # Pré-aquecimento: assinar lista de strikes (wrapper com lock interno)
                         try:
-                            with self._api_lock:
-                                if hasattr(self.api, 'subscribe_strike_list'):
-                                    self.api.subscribe_strike_list(asset, int(expiration))
+                            self.subscribe_strike_list(asset, int(expiration))
                         except Exception:
                             pass
                         # Espera ativa curta pelas cotações digitais geradas e verifica se o instrument_id existe
@@ -978,16 +1040,8 @@ class IQOptionAPI:
                         quotes_contains_id = False
                         try:
                             start_q = time.time()
-                            # Dynamically cap preheat budget to avoid late entries
-                            preheat_budget = 5.0
-                            try:
-                                if int(expiration) == 1:
-                                    st0 = float(self.get_server_timestamp())
-                                    sec0 = st0 % 60.0
-                                    # Very tight budget at candle start to prioritize on-time entry
-                                    preheat_budget = 0.6 if sec0 <= 1.0 else 0.3
-                            except Exception:
-                                pass
+                            # Janela de pré-aquecimento ultracurta para entradas M1 on-time
+                            preheat_budget = 0.12 if int(expiration) == 1 else 0.3
                             while time.time() - start_q < preheat_budget:
                                 try:
                                     table = getattr(self.api.api, 'instrument_quites_generated_data', {})
@@ -1015,132 +1069,78 @@ class IQOptionAPI:
                         # Se o pré-aquecimento não encontrou o instrument_id esperado, fazer fallback imediato
                         # para garantir a entrada no minuto correto (evita ficar aguardando ACK digital que não virá)
                         if not quotes_contains_id:
+                            # Caminho crítico: usar payout em cache (sem chamadas pesadas ao vendor)
+                            bin_payout = 0
                             try:
-                                self._log_message(
-                                    "Digital sem instrument_id após pré-aquecimento — usando fallback imediato binary-options (1m)",
-                                    "WARNING"
-                                )
-                                with self._api_lock:
-                                    fb_ok, fb_id = self.api.buy(amount, asset, direction, int(expiration))
-                                if fb_ok:
+                                cached = self.get_payout_cached(asset, ttl=180)
+                                if isinstance(cached, dict):
+                                    bin_payout = int(cached.get('binary', 0) or 0)
+                            except Exception:
+                                bin_payout = 0
+                            try:
+                                # Evitar consulta pesada do open_time no caminho crítico; usar payout>0 como proxy
+                                if bin_payout > 0 and not binary_suspended_local:
                                     self._log_message(
-                                        f"Fallback binary-options OK | order_id={fb_id} | server={self._format_server_time()}",
-                                        "INFO"
+                                        "Digital sem instrument_id após pré-aquecimento — usando fallback imediato binary-options (via payout cache)",
+                                        "WARNING"
                                     )
-                                    result_holder['success'] = True
-                                    result_holder['order_id'] = fb_id
-                                    return
+                                    with self._api_lock:
+                                        fb_ok, fb_id = self.api.buy(amount, asset, direction, int(expiration))
+                                    if fb_ok:
+                                        self._log_message(
+                                            f"Fallback binary-options OK | order_id={fb_id} | server={self._format_server_time()}",
+                                            "INFO"
+                                        )
+                                        result_holder['success'] = True
+                                        result_holder['order_id'] = fb_id
+                                        result_holder['done'] = True
+                                        return
+                                    else:
+                                        self._log_message(
+                                            f"Fallback binary-options falhou | detalhe={fb_id}",
+                                            "ERROR"
+                                        )
+                                        try:
+                                            if isinstance(fb_id, str) and 'suspended' in fb_id.lower():
+                                                binary_suspended_local = True
+                                                self._log_message(
+                                                    "Detecção: ativo binary suspenso — próximas tentativas de fallback serão puladas",
+                                                    "INFO"
+                                                )
+                                        except Exception:
+                                            pass
                                 else:
                                     self._log_message(
-                                        f"Fallback binary-options falhou | detalhe={fb_id}",
-                                        "ERROR"
+                                        "Fallback binary-options não tentado: binary fechado/suspenso ou sem payout em cache",
+                                        "INFO"
                                     )
                             except Exception as fb_ex:
                                 self._log_message(f"Erro no fallback binary-options: {str(fb_ex)}", "ERROR")
-                        # Reset e envio direto (no_force_send=False evita deadlock de exclusão mútua)
-                        with self._api_lock:
+                            # Sem instrument_id e sem fallback viável -> abortar rapidamente
                             try:
-                                # IMPORTANT: o ACK é escrito em self.api.api.digital_option_placed_id
-                                self.api.api.digital_option_placed_id = None
+                                cond_no_binary = (bin_payout <= 0) or binary_suspended_local
                             except Exception:
-                                pass
-                        # Enviar via API vendor oficial
-                        try:
-                            # Logar balance_id atual para diagnosticar
-                            try:
-                                bid = int(getattr(IQGV, 'balance_id', 0) or 0)
-                            except Exception:
-                                bid = 0
-                            self._log_message(f"WS place digital instrument_id={instrument_id} amount={int(amount)} balance_id={bid}", "DEBUG")
-                        except Exception:
-                            pass
-                        # Usa o canal vendor que converte amount->str internamente
-                        self.api.api.place_digital_option(instrument_id, int(amount))
-                        # Aguardar ack por até 10s (reduzir latência e alinhar entrada ao minuto)
-                        start_t = time.time()
-                        oid = None
-                        ok = False
-                        while time.time() - start_t < 10:
-                            try:
-                                # Ler o ACK do local correto (IQOptionAPI interno)
-                                oid = getattr(self.api.api, 'digital_option_placed_id', None)
-                                if isinstance(oid, int):
-                                    ok = True
-                                    break
-                                elif oid is not None:
-                                    # erro vindo do servidor
-                                    ok = False
-                                    break
-                            except Exception:
-                                pass
-                            time.sleep(0.05)
-                        # Log ack outcome
-                        try:
-                            if ok and isinstance(oid, int):
-                                self._log_message(
-                                    f"ACK digital recebido | order_id={oid} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
-                                    "DEBUG"
-                                )
+                                cond_no_binary = True
+                            if cond_no_binary:
                                 try:
-                                    self._order_type_by_id[str(oid)] = 'digital'
-                                    self._last_effective_option_type = 'digital'
+                                    self._log_message(
+                                        "Abortando envio digital: sem instrument_id e binary indisponível/suspenso",
+                                        "WARNING"
+                                    )
                                 except Exception:
                                     pass
-                            elif oid is not None:
-                                self._log_message(
-                                    f"ACK digital erro | payload={oid} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
-                                    "WARNING"
-                                )
-                            else:
-                                self._log_message(
-                                    f"ACK digital timeout (10s) sem id | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
-                                    "WARNING"
-                                )
-                        except Exception:
-                            pass
-                        # Fallback garantido: se Digital indisponível (sem quotes/id) ou ACK falhou, abre via binary-options
-                        if not ok:
-                            try:
-                                self._log_message(
-                                    "Digital indisponível/sem ACK — ativando fallback binary-options para garantir entrada (1m)",
-                                    "WARNING"
-                                )
-                                with self._api_lock:
-                                    fb_ok, fb_id = self.api.buy(amount, asset, direction, int(expiration))
-                                # Registrar outcome do fallback
-                                if fb_ok:
-                                    self._log_message(
-                                        f"Fallback binary-options OK | order_id={fb_id}",
-                                        "INFO"
-                                    )
-                                    try:
-                                        self._order_type_by_id[str(fb_id)] = 'binary'
-                                        self._last_effective_option_type = 'binary'
-                                    except Exception:
-                                        pass
-                                    ok, oid = True, fb_id
-                                else:
-                                    self._log_message(
-                                        f"Fallback binary-options falhou | detalhe={fb_id}",
-                                        "ERROR"
-                                    )
-                            except Exception as fb_ex:
-                                self._log_message(f"Erro no fallback binary-options: {str(fb_ex)}", "ERROR")
-                    else:
-                        with self._api_lock:
-                            ok, oid = self.api.buy(amount, asset, direction, expiration)
-                        try:
-                            if ok and oid is not None:
-                                self._order_type_by_id[str(oid)] = 'binary'
-                                self._last_effective_option_type = 'binary'
-                        except Exception:
-                            pass
-                    result_holder['success'] = bool(ok)
-                    result_holder['order_id'] = oid
+                                result_holder['success'] = False
+                                result_holder['order_id'] = None
+                                result_holder['done'] = True
+                                return
+                            # Se cond_no_binary for falso mas mesmo assim não concluímos (situação improvável), prosseguimos para envio digital
+
                 except Exception as be:
                     result_holder['error'] = str(be)
                 finally:
-                    result_holder['done'] = True
+                    # Se não houve return antecipado, marcar done no final do worker
+                    if not result_holder.get('done'):
+                        result_holder['done'] = True
 
             if option_type == 'digital':
                 # Executar inline para evitar timeouts artificiais de thread.join
@@ -1289,6 +1289,45 @@ class IQOptionAPI:
         except Exception as e:
             self._log_message(f"Erro ao obter timestamp do servidor: {str(e)}", "WARNING")
             return time.time()
+    
+    def subscribe_strike_list(self, asset: str, expiration_period: int) -> None:
+        """Wrapper to subscribe digital strike list (preheat) safely on the vendor API."""
+        try:
+            if not self.connected or not self.api:
+                return
+            with self._api_lock:
+                # Preferred stable_api method
+                if hasattr(self.api, 'subscribe_strike_list') and callable(getattr(self.api, 'subscribe_strike_list', None)):
+                    self.api.subscribe_strike_list(asset, int(expiration_period))
+                    return
+                # Fallback to inner API method if exposed
+                inner = getattr(self.api, 'api', None)
+                if inner and hasattr(inner, 'subscribe_instrument_quites_generated') and callable(getattr(inner, 'subscribe_instrument_quites_generated', None)):
+                    inner.subscribe_instrument_quites_generated(asset, int(expiration_period))
+        except Exception:
+            # Never break flow due to preheat issues
+            pass
+    
+    def unsubscribe_strike_list(self, asset: str, expiration_period: int) -> None:
+        """Wrapper to unsubscribe digital strike list on the vendor API (best-effort)."""
+        try:
+            if not self.connected or not self.api:
+                return
+            with self._api_lock:
+                if hasattr(self.api, 'unsubscribe_strike_list') and callable(getattr(self.api, 'unsubscribe_strike_list', None)):
+                    try:
+                        self.api.unsubscribe_strike_list(asset, int(expiration_period))
+                        return
+                    except Exception:
+                        pass
+                inner = getattr(self.api, 'api', None)
+                if inner and hasattr(inner, 'unsubscribe_instrument_quites_generated') and callable(getattr(inner, 'unsubscribe_instrument_quites_generated', None)):
+                    try:
+                        inner.unsubscribe_instrument_quites_generated(asset, int(expiration_period))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     
     def _format_server_time(self) -> str:
         """Return server time formatted for logs (HH:MM:SS with seconds-of-minute)."""

@@ -25,7 +25,8 @@ import {
   AutoAwesome,
 } from '@mui/icons-material';
 import apiService from '../../services/api';
-import type { TradingSession } from '../../types/index';
+import type { TradingSession, Operation } from '../../types/index';
+import { useTradingRealtime } from '../../hooks/useRealtime';
 
 interface Asset {
   id: string;
@@ -55,6 +56,8 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
   const [assets, setAssets] = useState<Asset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const { socket } = useTradingRealtime();
+  const [liveOps, setLiveOps] = useState<Map<string, Operation>>(new Map());
 
   // Trading control functions will use apiService directly
 
@@ -88,6 +91,59 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       }
     })();
   }, []);
+
+  // Load last operations for current session and subscribe to WS updates
+  useEffect(() => {
+    (async () => {
+      try {
+        if (currentSession?.id) {
+          const ops = await apiService.getOperations(currentSession.id as any);
+          const map = new Map<string, Operation>();
+          (Array.isArray(ops) ? ops : []).slice(0, 10).forEach((op) => map.set(String(op.id), op));
+          setLiveOps(map);
+        } else {
+          setLiveOps(new Map());
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, [currentSession?.id]);
+
+  useEffect(() => {
+    const onOpUpdate = (msg: any) => {
+      const data = msg?.data || msg;
+      if (!data) return;
+      const sessionMatch = !currentSession?.id || String(data.session) === String(currentSession?.id);
+      if (!sessionMatch) return;
+      const op: Operation = {
+        id: data.id,
+        session: data.session,
+        asset: String(data.asset),
+        direction: (data.direction as any) || 'call',
+        amount: Number(data.amount ?? data.entry_price ?? 0),
+        expiration_time: Number(data.expiration_time ?? 0),
+        entry_price: Number(data.entry_price ?? 0),
+        exit_price: typeof data.exit_price === 'number' ? data.exit_price : undefined,
+        result: data.result as any,
+        profit_loss: typeof data.profit_loss === 'number' ? data.profit_loss : undefined,
+        strategy_used: String(data.strategy_used ?? ''),
+        martingale_level: Number(data.martingale_level ?? 0),
+        soros_level: Number(data.soros_level ?? 0),
+        created_at: String(data.created_at ?? new Date().toISOString()),
+        closed_at: data.closed_at ? String(data.closed_at) : undefined,
+      };
+      setLiveOps((prev) => {
+        const map = new Map(prev);
+        map.set(String(op.id), op);
+        return map;
+      });
+    };
+    socket.on('operation_update', onOpUpdate);
+    return () => {
+      socket.off('operation_update', onOpUpdate);
+    };
+  }, [socket, currentSession?.id]);
 
   const loadAssetsAndStrategies = async (lightMode: boolean = false) => {
     try {
@@ -445,6 +501,45 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
                 }
               }} 
             />
+            {/* Mini feed de operações (últimas 3) */}
+            <Box sx={{ mt: 2, display: 'grid', gap: 1 }}>
+              {Array.from(liveOps.values())
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                .slice(0, 3)
+                .map((op) => {
+                  const isPending = !op.result || op.result === 'pending';
+                  const isWin = op.result === 'win';
+                  const resultLabel = isPending ? 'PENDENTE' : isWin ? 'WIN' : (op.result === 'draw' ? 'DRAW' : 'LOSS');
+                  const resultColor: any = isPending ? 'warning' : isWin ? 'success' : (op.result === 'draw' ? 'info' : 'error');
+                  const galeLabel = op.martingale_level > 0 ? `Gale ${op.martingale_level}` : 'Entrada';
+                  return (
+                    <Box key={String(op.id)} sx={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      p: 1,
+                      border: '1px solid #333', borderRadius: 1,
+                      backgroundColor: 'rgba(255, 255, 255, 0.02)'
+                    }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                        <Chip label={galeLabel} size="small" color="default" variant="outlined" />
+                        <Typography variant="body2" sx={{ color: '#E0E0E0' }} noWrap>
+                          {op.asset} · {op.direction?.toUpperCase()} · ${op.amount?.toFixed(2)}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Chip label={resultLabel} size="small" color={resultColor} />
+                        {!isPending && typeof op.profit_loss === 'number' && (
+                          <Typography variant="body2" sx={{ color: op.profit_loss >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}>
+                            {op.profit_loss >= 0 ? '+' : ''}{op.profit_loss.toFixed(2)}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Box>
+                  );
+                })}
+              {Array.from(liveOps.values()).length === 0 && (
+                <Typography variant="caption" color="text.secondary">Aguardando operações...</Typography>
+              )}
+            </Box>
           </Box>
         )}
 

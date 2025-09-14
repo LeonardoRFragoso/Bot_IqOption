@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import os
 from datetime import timedelta
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -45,6 +46,7 @@ INSTALLED_APPS = [
     'channels',
     'accounts',
     'trading',
+    'billing',
 ]
 
 MIDDLEWARE = [
@@ -89,6 +91,24 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+# Billing / Mercado Pago
+MERCADOPAGO_ACCESS_TOKEN = config('MERCADOPAGO_ACCESS_TOKEN', default='')
+MERCADOPAGO_PUBLIC_KEY = config('MERCADOPAGO_PUBLIC_KEY', default='')
+
+# Where Mercado Pago sends payment notifications (webhooks)
+# In development, this may not be reachable from the public internet; use a tunneling service if needed
+MERCADOPAGO_NOTIFICATION_URL = config(
+    'MERCADOPAGO_NOTIFICATION_URL',
+    default='http://127.0.0.1:8000/api/billing/webhook/'
+)
+
+# Platform admin email (bypass subscription checks and enable admin billing dashboard)
+PLATFORM_ADMIN_EMAIL = config('PLATFORM_ADMIN_EMAIL', default='leonardorfragoso@gmail.com')
+
+# Subscription configuration
+SUBSCRIPTION_PRICE = config('SUBSCRIPTION_PRICE', default=49.90, cast=float)
+FRONTEND_URL = config('FRONTEND_URL', default='http://127.0.0.1:5173')
 
 # For production, use PostgreSQL:
 # DATABASES = {

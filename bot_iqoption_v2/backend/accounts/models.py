@@ -96,6 +96,45 @@ class User(AbstractUser):
         return None, None
 
 
+class Notification(models.Model):
+    """User notifications model"""
+    
+    TYPE_CHOICES = [
+        ('success', 'Success'),
+        ('warning', 'Warning'),
+        ('error', 'Error'),
+        ('info', 'Info'),
+    ]
+    
+    CATEGORY_CHOICES = [
+        ('trading', 'Trading'),
+        ('system', 'System'),
+        ('account', 'Account'),
+    ]
+    
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='notifications'
+    )
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES, default='info')
+    category = models.CharField(max_length=10, choices=CATEGORY_CHOICES, default='system')
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'user_notifications'
+        verbose_name = 'Notificação'
+        verbose_name_plural = 'Notificações'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.title}"
+
+
 class TradingConfiguration(models.Model):
     """Trading configuration for each user - based on config.txt structure"""
     
@@ -191,6 +230,36 @@ class TradingConfiguration(models.Model):
         ],
         default='mhi',
         help_text="Estratégia padrão"
+    )
+    
+    # Parâmetros específicos da estratégia Torres Gêmeas
+    torres_event_driven = models.BooleanField(
+        default=False,
+        help_text="Acionar por rompimento (sem gate de minuto)"
+    )
+    torres_event_cooldown_sec = models.IntegerField(
+        default=45,
+        help_text="Cooldown entre sinais event-driven (s)"
+    )
+    torres_timeframe = models.IntegerField(
+        default=60,
+        help_text="Timeframe em segundos (padrão M1=60)"
+    )
+    torres_lookback = models.IntegerField(
+        default=60,
+        help_text="Número de velas para detectar A-B-C"
+    )
+    torres_tolerancia_pct = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=0.050,
+        help_text="Tolerância de similaridade das torres em %"
+    )
+    torres_break_buffer_pct = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=0.000,
+        help_text="Buffer extra para confirmar rompimento em %"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)

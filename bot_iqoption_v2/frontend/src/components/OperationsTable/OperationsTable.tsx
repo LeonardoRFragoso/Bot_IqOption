@@ -27,15 +27,21 @@ import { useOperations } from '../../hooks/useApi';
 import type { Operation } from '../../types/index';
 
 interface OperationsTableProps {
-  sessionId?: number;
+  sessionId?: string | number;
   title?: string;
   maxRows?: number;
+  // Opcional: operações em tempo real vindas do WebSocket para mesclar com as da API
+  liveOperations?: Operation[];
+  // Opcional: ao mudar, força um refetch das operações da API
+  refreshSignal?: number;
 }
 
 const OperationsTable: React.FC<OperationsTableProps> = ({ 
   sessionId, 
   title = 'Operações', 
-  maxRows 
+  maxRows,
+  liveOperations,
+  refreshSignal,
 }) => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(maxRows || 10);
@@ -43,6 +49,13 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
   const [open, setOpen] = useState(false);
   
   const { data: operations, loading, error, refetch } = useOperations(sessionId);
+
+  // Força refetch quando refreshSignal muda
+  React.useEffect(() => {
+    if (typeof refreshSignal !== 'number') return;
+    refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
 
   const handleChangePage = (_event: unknown, newPage: number) => {
     setPage(newPage);
@@ -68,6 +81,8 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
     switch (result) {
       case 'win': return 'success';
       case 'loss': return 'error';
+      case 'draw': return 'info';
+      case 'pending': return 'warning';
       default: return 'default';
     }
   };
@@ -115,7 +130,25 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
     );
   }
 
-  const displayOperations = Array.isArray(operations) ? operations : [];
+  // Mesclar operações da API com operações em tempo real (WS)
+  const baseOperations = Array.isArray(operations) ? operations : [];
+  const mergedMap = new Map<string, Operation>();
+  baseOperations.forEach((op) => mergedMap.set(String(op.id), op));
+  if (Array.isArray(liveOperations)) {
+    for (const live of liveOperations) {
+      // Preferir dados mais recentes do live (por exemplo, resultado e P&L atualizados)
+      const key = String(live.id);
+      const current = mergedMap.get(key);
+      if (!current) {
+        mergedMap.set(key, live);
+      } else {
+        mergedMap.set(key, { ...current, ...live });
+      }
+    }
+  }
+  const displayOperations = Array.from(mergedMap.values()).sort((a, b) => (
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  ));
   const paginatedOperations = maxRows 
     ? displayOperations.slice(0, maxRows)
     : displayOperations.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
@@ -185,7 +218,7 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
                     <TableCell>
                       {operation.result ? (
                         <Chip 
-                          label={operation.result === 'win' ? 'WIN' : 'LOSS'} 
+                          label={operation.result === 'win' ? 'WIN' : operation.result === 'draw' ? 'DRAW' : 'LOSS'} 
                           color={getResultColor(operation.result)}
                           size="small"
                         />

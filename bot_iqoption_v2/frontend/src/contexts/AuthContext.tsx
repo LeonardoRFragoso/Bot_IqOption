@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, type ReactNode } from 'react';
-import type { User, LoginCredentials, RegisterData } from '../types/index';
+import type { User, LoginCredentials, RegisterData, SubscriptionStatus } from '../types/index';
 import apiService from '../services/api';
 
 interface AuthContextType {
@@ -10,6 +10,8 @@ interface AuthContextType {
   logout: () => void;
   refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
+  isSubscribed: boolean;
+  refreshSubscriptionStatus: () => Promise<SubscriptionStatus | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -21,6 +23,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -28,6 +31,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         try {
           const userData = await apiService.getCurrentUser();
           setUser(userData);
+          try {
+            const status = await apiService.getSubscriptionStatus();
+            setIsSubscribed(!!status?.is_subscribed);
+          } catch (err) {
+            console.warn('Failed to get subscription status on init:', err);
+          }
         } catch (error) {
           console.error('Failed to get current user:', error);
           apiService.logout();
@@ -44,6 +53,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await apiService.login(credentials);
       const userData = await apiService.getCurrentUser();
       setUser(userData);
+      try {
+        const status = await apiService.getSubscriptionStatus();
+        setIsSubscribed(!!status?.is_subscribed);
+      } catch (err) {
+        console.warn('Failed to get subscription status after login:', err);
+      }
     } catch (error) {
       console.error('Login failed:', error);
       throw error;
@@ -54,6 +69,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const response = await apiService.register(userData);
       setUser(response.user);
+      try {
+        const status = await apiService.getSubscriptionStatus();
+        setIsSubscribed(!!status?.is_subscribed);
+      } catch (err) {
+        console.warn('Failed to get subscription status after register:', err);
+      }
     } catch (error: any) {
       console.error('Registration failed:', error);
       console.error('Error response:', error.response?.data);
@@ -65,6 +86,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = () => {
     apiService.logout();
     setUser(null);
+    setIsSubscribed(false);
   };
 
   const refreshUser = async () => {
@@ -78,6 +100,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const refreshSubscriptionStatus = async (): Promise<SubscriptionStatus | null> => {
+    if (!apiService.isAuthenticated()) return null;
+    try {
+      const status = await apiService.getSubscriptionStatus();
+      setIsSubscribed(!!status?.is_subscribed);
+      return status;
+    } catch (err) {
+      console.error('Failed to refresh subscription status:', err);
+      return null;
+    }
+  };
+
   const value: AuthContextType = {
     user,
     loading,
@@ -86,6 +120,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     logout,
     refreshUser,
     isAuthenticated: !!user,
+    isSubscribed,
+    refreshSubscriptionStatus,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

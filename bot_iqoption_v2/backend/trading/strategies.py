@@ -11,6 +11,9 @@ from decimal import Decimal
 from django.utils import timezone
 from .iq_api import IQOptionAPI
 from .models import TradingSession, Operation, TradingLog
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from .serializers import OperationSerializer, TradingSessionSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,29 @@ class BaseStrategy:
             
         return True
 
+    # ------------------ WS helpers ------------------
+    def _ws_group(self) -> str:
+        try:
+            return f"trading_{self.user.id}"
+        except Exception:
+            return ""
+
+    def _ws_send(self, event_type: str, data: dict):
+        try:
+            group = self._ws_group()
+            if not group:
+                return
+            channel_layer = get_channel_layer()
+            if channel_layer is None:
+                return
+            async_to_sync(channel_layer.group_send)(group, {
+                'type': event_type,
+                'data': data,
+            })
+        except Exception:
+            # Never break strategy due to WS errors
+            pass
+
     # ------------------ Time gating helpers ------------------
     def _server_dt(self):
         """Return (timestamp, local naive datetime) from server time (v1-compatible)."""
@@ -113,11 +139,13 @@ class BaseStrategy:
             except Exception:
                 minute_in_block = 0
         if (minute_in_block == 0) and (sec <= 1.0):
-            try:
-                self._log(f"GATE MHI | min_bloco={minute_in_block} | sec={sec:.2f}", "DEBUG")
-            except Exception:
-                pass
-            return self._gate_once('mhi', st)
+            allowed = self._gate_once('mhi', st)
+            if allowed:
+                try:
+                    self._log(f"GATE MHI | min_bloco={minute_in_block} | sec={sec:.2f}", "DEBUG")
+                except Exception:
+                    pass
+            return allowed
         return False
 
     def _is_entry_time_torres(self) -> bool:
@@ -135,11 +163,13 @@ class BaseStrategy:
             except Exception:
                 minute_in_block = 0
         if (minute_in_block == 4) and (sec <= 1.0):
-            try:
-                self._log(f"GATE TORRES | min_bloco={minute_in_block} | sec={sec:.2f}", "DEBUG")
-            except Exception:
-                pass
-            return self._gate_once('torres', st)
+            allowed = self._gate_once('torres', st)
+            if allowed:
+                try:
+                    self._log(f"GATE TORRES | min_bloco={minute_in_block} | sec={sec:.2f}", "DEBUG")
+                except Exception:
+                    pass
+            return allowed
         return False
 
     def _is_entry_time_mhi_m5(self) -> bool:
@@ -157,11 +187,13 @@ class BaseStrategy:
             except Exception:
                 minute_in_block_30 = 0
         if (minute_in_block_30 == 0) and (sec <= 1.0):
-            try:
-                self._log(f"GATE MHI5 | min_bloco30={minute_in_block_30} | sec={sec:.2f}", "DEBUG")
-            except Exception:
-                pass
-            return self._gate_once('mhi_m5', st)
+            allowed = self._gate_once('mhi_m5', st)
+            if allowed:
+                try:
+                    self._log(f"GATE MHI5 | min_bloco30={minute_in_block_30} | sec={sec:.2f}", "DEBUG")
+                except Exception:
+                    pass
+            return allowed
         return False
 
     # ------------------ Execution helpers ------------------
@@ -187,11 +219,10 @@ class BaseStrategy:
             payouts = self.api.get_payout(asset)
             digital = payouts.get('digital', 0) or 0
             binary = payouts.get('binary', 0) or 0
-            # Heurísticas para reduzir atraso de entrada:
-            # - Preferir SEMPRE BINARY em OTC (evita quedas e atrasos de digital nos fins de semana)
-            # - Preferir BINARY em caso de empate de payout (reduz risco de atraso no ACK do digital)
+            # Heurísticas para reduzir atraso de entrada, respeitando preferências do usuário:
+            # - Em caso de EMPATE de payout (>0), preferir DIGITAL (inclusive em OTC)
             # - Preferir BINARY se já passamos de 1s do minuto (entrada tardia em digital costuma atrasar)
-            # - Usar DIGITAL apenas quando vantagem for significativa e ainda estivermos no início do minuto
+            # - Usar DIGITAL quando vantagem for significativa e ainda estivermos no início do minuto
             try:
                 st = float(self.api.get_server_timestamp())
                 sec = st % 60.0
@@ -200,14 +231,10 @@ class BaseStrategy:
             asset_upper = str(asset).upper()
             is_otc = asset_upper.endswith('-OTC')
             digital_better_margin = digital - binary  # margem de vantagem do digital
-            # Regra 1: OTC → BINARY (evita atrasos recorrentes nas digitais OTC)
-            if is_otc and binary > 0:
-                self._log("OTC detectado — preferindo BINARY para evitar atrasos", "INFO")
-                return 'binary', asset
-            # Regra 2: Se payouts forem IGUAIS (>0), preferir BINARY por estabilidade
-            if digital > 0 and digital == binary and binary > 0:
-                self._log("Payouts iguais — preferindo BINARY por estabilidade/latência", "INFO")
-                return 'binary', asset
+            # Regra 1: Se payouts forem IGUAIS (>0), preferir DIGITAL (inclusive em OTC)
+            if digital > 0 and digital == binary:
+                self._log("Payouts iguais — preferindo DIGITAL conforme preferência", "INFO")
+                return 'digital', asset
             # Regra 3: Após 1s do minuto → BINARY (para 1m)
             if sec > 1.0 and binary > 0:
                 self._log("Segundo atual > 1s — preferindo BINARY para entrada imediata", "INFO")
@@ -380,6 +407,8 @@ class BaseStrategy:
     def _execute_trade(self, asset: str, direction: str, expiration: int, operation_type: str) -> bool:
         """Execute trade with martingale and soros logic"""
         entry_value = float(self.config.valor_entrada)
+        # Track cumulative P/L for the entire Gale series (used for Soros net calculation)
+        series_profit = 0.0
         
         # Apply Soros if configured
         if self.config.soros_usar and hasattr(self.session, 'soros_level'):
@@ -468,6 +497,12 @@ class BaseStrategy:
                 operation_type='ENTRY' if gale_level == 0 else f'GALE{gale_level}',
                 iq_order_id=order_id
             )
+            # Broadcast operation open
+            try:
+                payload = OperationSerializer(operation).data
+                self._ws_send('operation_update', payload)
+            except Exception:
+                pass
             
             gale_text = f' (Gale {gale_level})' if gale_level > 0 else ''
             self._log(f"Ordem aberta{gale_text} | Par: {asset} | Valor: ${entry_value}", "INFO")
@@ -476,18 +511,42 @@ class BaseStrategy:
             result = self._wait_for_result(operation, actual_operation_type)
             
             if result and result > 0:
+                # accumulate series P/L
+                try:
+                    series_profit += float(result)
+                except Exception:
+                    pass
                 # Win - break martingale sequence
                 self._handle_win(operation, result, gale_level)
+                # Soros progression based on NET series profit (win result minus previous Gale losses)
+                if self.config.soros_usar:
+                    try:
+                        self._log(f"Soros: lucro líquido da série = ${series_profit:.2f}", "INFO")
+                    except Exception:
+                        pass
+                    self._update_soros_progression(True, series_profit)
                 return True
             elif result is not None:
                 # Loss or draw
                 self._handle_loss(operation, result, gale_level)
+                # accumulate series P/L (result is 0 for draw or negative for loss)
+                try:
+                    series_profit += float(result)
+                except Exception:
+                    pass
                 # Execute next Gale immediately on the next candle (no extra 1-minute wait)
                 if gale_level < martingale_levels:
                     self._log("Executando Gale imediatamente na próxima vela...", "INFO")
                     # Pequeno descanso para garantir sincronização após recebimento do resultado
                     time.sleep(0.1)
                 
+        # Full series ended without a win: reset Soros progression
+        if self.config.soros_usar:
+            try:
+                self._log(f"Soros: série finalizada sem vitória. Lucro líquido da série = ${series_profit:.2f}. Resetando Soros.", "WARNING")
+            except Exception:
+                pass
+            self._update_soros_progression(False, series_profit)
         return False
     
     def _wait_for_result(self, operation: Operation, operation_type: str) -> Optional[float]:
@@ -533,10 +592,14 @@ class BaseStrategy:
         self.session.total_profit += Decimal(str(result))
         self.session.current_balance = Decimal(str(self.api.get_balance()))
         self.session.save()
-        
-        # Handle Soros progression
-        if self.config.soros_usar:
-            self._update_soros_progression(True, result)
+        # WS broadcast updates
+        try:
+            op_payload = OperationSerializer(operation).data
+            sess_payload = TradingSessionSerializer(self.session).data
+            self._ws_send('operation_update', op_payload)
+            self._ws_send('session_update', sess_payload)
+        except Exception:
+            pass
         
         gale_text = f' (Gale {gale_level})' if gale_level > 0 else ''
         self._log(f"WIN{gale_text} | Lucro: ${result}", "INFO")
@@ -561,10 +624,14 @@ class BaseStrategy:
         self.session.total_profit += Decimal(str(result))
         self.session.current_balance = Decimal(str(self.api.get_balance()))
         self.session.save()
-        
-        # Handle Soros progression
-        if self.config.soros_usar:
-            self._update_soros_progression(False, result)
+        # WS broadcast updates
+        try:
+            op_payload = OperationSerializer(operation).data
+            sess_payload = TradingSessionSerializer(self.session).data
+            self._ws_send('operation_update', op_payload)
+            self._ws_send('session_update', sess_payload)
+        except Exception:
+            pass
         
         gale_text = f' (Gale {gale_level})' if gale_level > 0 else ''
         self._log(f"{result_text}{gale_text}", "ERROR" if result < 0 else "WARNING")
@@ -572,14 +639,20 @@ class BaseStrategy:
     def _update_soros_progression(self, won: bool, result: float):
         """Update Soros progression"""
         if won:
-            # Increment Soros level on win
-            current_level = getattr(self.session, 'soros_level', 0)
-            if current_level < self.config.soros_niveis:
-                setattr(self.session, 'soros_level', current_level + 1)
-                current_value = getattr(self.session, 'soros_value', 0)
-                setattr(self.session, 'soros_value', current_value + result)
+            # Only advance Soros if the net profit is positive
+            try:
+                net_profit = float(result)
+            except Exception:
+                net_profit = 0.0
+            if net_profit > 0:
+                # Increment Soros level on win
+                current_level = getattr(self.session, 'soros_level', 0)
+                if current_level < self.config.soros_niveis:
+                    setattr(self.session, 'soros_level', current_level + 1)
+                    current_value = getattr(self.session, 'soros_value', 0)
+                    setattr(self.session, 'soros_value', current_value + net_profit)
         else:
-            # Reset Soros on loss
+            # Reset Soros on loss (full series loss)
             setattr(self.session, 'soros_level', 0)
             setattr(self.session, 'soros_value', 0)
         
@@ -643,10 +716,9 @@ class MHIStrategy(BaseStrategy):
                         pending_target_idx = minute_idx + 1
                         # Pré-aquecer DIGITAL: assinar strike list com antecedência quando planejamos entrar na próxima vela
                         try:
-                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'api', None):
+                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
                                 with self.api._api_lock:
-                                    if hasattr(self.api.api, 'subscribe_strike_list'):
-                                        self.api.api.subscribe_strike_list(asset, 1)
+                                    self.api.subscribe_strike_list(asset, 1)
                         except Exception:
                             pass
                         try:
@@ -770,14 +842,82 @@ class TorresGemeasStrategy(BaseStrategy):
         
         if current_asset != asset:
             asset = current_asset
+        # Manter pré-aquecimento DIGITAL persistente para reduzir misses de instrument_id
+        try:
+            if operation_type == 'digital':
+                with self.api._api_lock:
+                    if getattr(self.api, 'subscribe_strike_list', None):
+                        self.api.subscribe_strike_list(asset, 1)
+                setattr(self, '_torres_digital_sub_asset', asset)
+        except Exception:
+            pass
         
         while self.running and self._check_stop_conditions():
             try:
+                # Periodically check if asset is still available/best (mirror MHI loop)
+                if hasattr(self, '_last_asset_check_torres'):
+                    if time.time() - self._last_asset_check_torres > 300:  # Check every 5 minutes
+                        new_operation_type, new_asset = self._determine_operation_type(asset)
+                        if new_asset and new_asset != asset:
+                            self._log(f"Mudando de {asset} para {new_asset}", "INFO")
+                            # Atualizar assinatura digital persistente ao trocar de ativo
+                            try:
+                                if operation_type == 'digital':
+                                    prev = getattr(self, '_torres_digital_sub_asset', None)
+                                    if prev and prev != new_asset and getattr(self.api, 'unsubscribe_strike_list', None):
+                                        with self.api._api_lock:
+                                            self.api.unsubscribe_strike_list(prev, 1)
+                                    with self.api._api_lock:
+                                        if getattr(self.api, 'subscribe_strike_list', None):
+                                            self.api.subscribe_strike_list(new_asset, 1)
+                                    setattr(self, '_torres_digital_sub_asset', new_asset)
+                            except Exception:
+                                pass
+                            asset = new_asset
+                            operation_type = new_operation_type
+                        self._last_asset_check_torres = time.time()
+                else:
+                    self._last_asset_check_torres = time.time()
+                # Opcional: disparo por evento (sem gate de minuto) quando habilitado em config
+                try:
+                    event_driven = bool(getattr(self.config, 'torres_event_driven', False))
+                    cooldown = int(getattr(self.config, 'torres_event_cooldown_sec', 45))
+                except Exception:
+                    event_driven = False
+                    cooldown = 45
+                if event_driven:
+                    last_sig = getattr(self, '_torres_last_signal_time', 0)
+                    if time.time() - float(last_sig or 0) >= max(5, cooldown):
+                        direction_ev = self._analyze_torres_pattern(asset)
+                        if direction_ev in ['put', 'call']:
+                            # Pré-aquecer DIGITAL se for o tipo preferido
+                            try:
+                                if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                                    with self.api._api_lock:
+                                        self.api.subscribe_strike_list(asset, 1)
+                            except Exception:
+                                pass
+                            self._execute_trade(asset, direction_ev, 1, operation_type)
+                            self._log("-" * 30, "INFO")
+                            try:
+                                setattr(self, '_torres_last_signal_time', time.time())
+                            except Exception:
+                                pass
+                            # Evitar dupla entrada no mesmo ciclo
+                            time.sleep(0.1)
+                            continue
                 # Precise gate (same cadence as MHI M1)
                 if self._is_entry_time_torres():
                     direction = self._analyze_torres_pattern(asset)
-                    
+                
                     if direction in ['put', 'call']:
+                        # Pré-aquecer DIGITAL: assinar strike list antes de enviar ordem
+                        try:
+                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                                with self.api._api_lock:
+                                    self.api.subscribe_strike_list(asset, 1)
+                        except Exception:
+                            pass
                         self._execute_trade(asset, direction, 1, operation_type)
                         self._log("-" * 30, "INFO")
                 
@@ -788,48 +928,117 @@ class TorresGemeasStrategy(BaseStrategy):
                 time.sleep(5)
     
     def _analyze_torres_pattern(self, asset: str) -> Optional[str]:
-        """Analyze Torres Gêmeas pattern (1 candle analysis)"""
-        timeframe = 60
-        candles_count = 4
-        
-        # Get moving averages if configured
-        if self.config.analise_medias:
-            candles = self.api.get_candles(asset, timeframe, self.config.velas_medias)
-            if candles:
-                trend = self._analyze_moving_averages(candles, self.config.velas_medias)
-        else:
-            candles = self.api.get_candles(asset, timeframe, candles_count)
-            trend = None
-        
-        if not candles or len(candles) < 4:
-            self._log("Erro ao obter vela para análise", "ERROR")
-            return None
-        
+        """Analyze Torres Gêmeas (Twin Towers) pattern using neckline breakout confirmation.
+        - Double Top (PUT): duas máximas similares (A e C) com um vale (B) entre elas, entra no rompimento ABAIXO da neckline (mínimo entre A e C).
+        - Double Bottom (CALL): duas mínimas similares (A e C) com um pico (B) entre elas, entra no rompimento ACIMA da neckline (máximo entre A e C).
+        """
+        timeframe = int(getattr(self.config, 'torres_timeframe', 60))  # M1 por padrão
+        lookback = int(getattr(self.config, 'torres_lookback', 60))    # histórico p/ detectar A-B-C
+
+        # Buscar candles e, opcionalmente, tendência por médias
+        trend = None
+        candles = None
         try:
-            # Analyze 4th candle back
-            vela4 = 'Verde' if candles[-4]['open'] < candles[-4]['close'] else ('Vermelha' if candles[-4]['open'] > candles[-4]['close'] else 'Doji')
-            
-            # Check for doji
-            if vela4 == 'Doji':
-                self._log(f"Vela de análise: {vela4}", "WARNING")
-                self._log("Entrada abortada - Foi encontrado um doji na análise.", "WARNING")
-                return None
-            
-            # Determine direction (same as candle color)
-            direction = 'call' if vela4 == 'Verde' else 'put'
-            
-            # Check against trend if configured
-            if self.config.analise_medias and trend:
-                if direction != trend:
-                    self._log(f"Vela de análise: {vela4}", "WARNING")
-                    self._log("Entrada abortada - Contra Tendência.", "WARNING")
-                    return None
-            
-            self._log(f"Vela de análise: {vela4} - Entrada para {direction.upper()}", "INFO")
-            return direction
-            
+            candles = self.api.get_candles(asset, timeframe, max(lookback, getattr(self.config, 'velas_medias', 20)))
+            if self.config.analise_medias and candles:
+                trend = self._analyze_moving_averages(candles, self.config.velas_medias)
+        except Exception:
+            candles = None
+
+        if not candles or len(candles) < 10:
+            self._log("Erro ao obter velas para análise Torres Gêmeas (histórico insuficiente)", "ERROR")
+            return None
+
+        try:
+            highs = [c['max'] if 'max' in c else c.get('high', c['close']) for c in candles]
+            lows = [c['min'] if 'min' in c else c.get('low', c['close']) for c in candles]
+            closes = [c['close'] for c in candles]
+            n = len(candles)
+
+            def is_top(i: int) -> bool:
+                return highs[i] > highs[i-1] and highs[i] > highs[i+1]
+
+            def is_bottom(i: int) -> bool:
+                return lows[i] < lows[i-1] and lows[i] < lows[i+1]
+
+            top_idx = [i for i in range(2, n-2) if is_top(i)]
+            bot_idx = [i for i in range(2, n-2) if is_bottom(i)]
+
+            # Parâmetros de similaridade/rompimento
+            tolerance_pct = float(getattr(self.config, 'torres_tolerancia_pct', 0.05))  # 0.05% ~ 5 pips
+            break_buffer_pct = float(getattr(self.config, 'torres_break_buffer_pct', 0.0))
+
+            signal = None
+            signal_idx = -1
+
+            # 1) Double Top (PUT)
+            if len(top_idx) >= 2:
+                t2 = top_idx[-1]
+                t1 = top_idx[-2]
+                if t1 < t2:
+                    # Vale(s) entre t1 e t2 e neckline = menor LOW nesse intervalo
+                    if any((t1 < b < t2) for b in bot_idx):
+                        neckline_low = min(lows[t1:t2+1])
+                        # Similaridade das máximas
+                        ref = (highs[t1] + highs[t2]) / 2.0
+                        if ref > 0:
+                            diff_pct = abs(highs[t1] - highs[t2]) / ref * 100.0
+                            if diff_pct <= tolerance_pct:
+                                last_close = closes[-1]
+                                thresh = neckline_low * (1.0 - break_buffer_pct/100.0)
+                                broken = last_close < thresh
+                                try:
+                                    self._log(
+                                        f"TwinTop det.: A={highs[t1]:.5f}@{t1}, C={highs[t2]:.5f}@{t2}, neck={neckline_low:.5f}, close={last_close:.5f}, diff={diff_pct:.3f}% -> romp={broken}",
+                                        "DEBUG"
+                                    )
+                                except Exception:
+                                    pass
+                                if broken:
+                                    signal = 'put'
+                                    signal_idx = max(t1, t2)
+
+            # 2) Double Bottom (CALL)
+            if len(bot_idx) >= 2:
+                b2 = bot_idx[-1]
+                b1 = bot_idx[-2]
+                if b1 < b2:
+                    # Pico(s) entre b1 e b2 e neckline = maior HIGH nesse intervalo
+                    if any((b1 < t < b2) for t in top_idx):
+                        neckline_high = max(highs[b1:b2+1])
+                        # Similaridade das mínimas
+                        ref = (lows[b1] + lows[b2]) / 2.0
+                        if ref > 0:
+                            diff_pct = abs(lows[b1] - lows[b2]) / ref * 100.0
+                            if diff_pct <= tolerance_pct:
+                                last_close = closes[-1]
+                                thresh = neckline_high * (1.0 + break_buffer_pct/100.0)
+                                broken = last_close > thresh
+                                try:
+                                    self._log(
+                                        f"TwinBottom det.: A={lows[b1]:.5f}@{b1}, C={lows[b2]:.5f}@{b2}, neck={neckline_high:.5f}, close={last_close:.5f}, diff={diff_pct:.3f}% -> romp={broken}",
+                                        "DEBUG"
+                                    )
+                                except Exception:
+                                    pass
+                                if broken:
+                                    # Se já houver PUT, escolher o padrão mais recente
+                                    if signal is None or b2 > signal_idx:
+                                        signal = 'call'
+                                        signal_idx = max(b1, b2)
+
+            if signal in ['put', 'call']:
+                # Respeitar filtro de tendência, se habilitado
+                if self.config.analise_medias and trend:
+                    if signal != trend:
+                        self._log("Entrada abortada - Contra Tendência.", "WARNING")
+                        return None
+                self._log(f"Torres Gêmeas (neckline) confirmado - Entrada para {signal.upper()}", "INFO")
+                return signal
+
+            return None
         except Exception as e:
-            self._log(f"Erro na análise Torres Gêmeas: {str(e)}", "ERROR")
+            self._log(f"Erro na análise Torres Gêmeas (neckline): {str(e)}", "ERROR")
             return None
 
 
