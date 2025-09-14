@@ -807,6 +807,29 @@ class MHIStrategy(BaseStrategy):
             self._log("Erro ao obter velas para análise", "ERROR")
             return None
         
+        # Validate that returned candles are M5 (avoid accidental M1 fallback from API)
+        try:
+            if len(candles) >= 3:
+                step1 = int(candles[-1]['from']) - int(candles[-2]['from'])
+                step2 = int(candles[-2]['from']) - int(candles[-3]['from'])
+                if not (240 <= step1 <= 360 and 240 <= step2 <= 360):
+                    # One quick re-fetch attempt
+                    alt = self.api.get_candles(asset, timeframe, max(candles_count, 5))
+                    if alt and len(alt) >= 3:
+                        s1 = int(alt[-1]['from']) - int(alt[-2]['from'])
+                        s2 = int(alt[-2]['from']) - int(alt[-3]['from'])
+                        if 240 <= s1 <= 360 and 240 <= s2 <= 360:
+                            candles = alt
+                        else:
+                            self._log("MHI M5: timeframe inconsistente (dados aparentam ser M1). Abortando análise.", "WARNING")
+                            return None
+                    else:
+                        self._log("MHI M5: histórico insuficiente após re-tentativa. Abortando análise.", "WARNING")
+                        return None
+        except Exception:
+            # Fail safe: proceed without validation
+            pass
+        
         try:
             # Selecionar SEMPRE as 3 últimas velas fechadas imediatamente anteriores ao momento da análise
             c_sel = [candles[-3], candles[-2], candles[-1]]
@@ -1114,6 +1137,25 @@ class MHIM5Strategy(BaseStrategy):
         
         while self.running and self._check_stop_conditions():
             try:
+                # Payout cache warm-up (executed sparingly to avoid heavy vendor calls at gate)
+                try:
+                    warm_interval = int(getattr(self.config, 'mhi5_payout_warmup_sec', 120))
+                except Exception:
+                    warm_interval = 120
+                try:
+                    last_warm = getattr(self, '_mhi5_last_payout_warm', 0)
+                except Exception:
+                    last_warm = 0
+                try:
+                    if time.time() - float(last_warm or 0) >= max(30, warm_interval):
+                        _ = self.api.get_payout(asset)
+                        try:
+                            setattr(self, '_mhi5_last_payout_warm', time.time())
+                        except Exception:
+                            pass
+                except Exception:
+                    # Never break loop due to warm-up failures
+                    pass
                 # Precise gate for MHI M5 entries (minutes 29 and 59 end)
                 if self._is_entry_time_mhi_m5():
                     direction = self._analyze_mhi_m5_pattern(asset)
