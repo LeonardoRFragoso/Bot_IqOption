@@ -454,16 +454,17 @@ class BaseStrategy:
             # Determinar tipo efetivo sem forçar DIGITAL (respeita decisão anterior)
             actual_operation_type = operation_type
 
-            # Gale em M1: minimizar atraso. Se passamos de 1s do minuto, preferir BINARY para envio imediato;
-            # caso ainda estejamos <=1s, manter DIGITAL e pré-aquecer strikes.
+            # Otimização para Gales: minimizar atraso independente do timeframe
             try:
-                if gale_level > 0 and int(expiration) == 1:
+                if gale_level > 0:
                     try:
                         st_now2 = float(self.api.get_server_timestamp())
                         sec_now2 = st_now2 % 60.0
                     except Exception:
                         sec_now2 = 0.0
-                    if sec_now2 > 1.0 and actual_operation_type == 'digital':
+                    
+                    # Para M1 (expiration=1): usar BINARY após 1s para entrada imediata
+                    if int(expiration) == 1 and sec_now2 > 1.0 and actual_operation_type == 'digital':
                         # Validar viabilidade do binary via payout em cache (sem chamadas pesadas)
                         use_binary = True
                         try:
@@ -477,14 +478,25 @@ class BaseStrategy:
                         if use_binary:
                             actual_operation_type = 'binary'
                             try:
-                                self._log("Gale >1s do minuto — mudando para BINARY para entrada imediata", "INFO")
+                                self._log("Gale M1 >1s do minuto — mudando para BINARY para entrada imediata", "INFO")
                             except Exception:
                                 pass
-                    elif actual_operation_type == 'digital':
-                        # Estamos dentro da janela de 0-1s: pré-aquecer DIGITAL imediatamente antes de enviar
+                    
+                    # Para M5 (expiration=5): sempre pré-aquecer DIGITAL imediatamente
+                    elif int(expiration) == 5 and actual_operation_type == 'digital':
                         try:
-                            if hasattr(self.api, 'subscribe_strike_list'):
-                                self.api.subscribe_strike_list(asset, int(expiration))
+                            if hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                                with self.api._api_lock:
+                                    self.api.subscribe_strike_list(asset, int(expiration))
+                        except Exception:
+                            pass
+                    
+                    # Para M1 dentro da janela de 0-1s: pré-aquecer DIGITAL
+                    elif int(expiration) == 1 and actual_operation_type == 'digital':
+                        try:
+                            if hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                                with self.api._api_lock:
+                                    self.api.subscribe_strike_list(asset, int(expiration))
                         except Exception:
                             pass
             except Exception:
@@ -1135,34 +1147,85 @@ class MHIM5Strategy(BaseStrategy):
         if current_asset != asset:
             asset = current_asset
         
+        # Pré-cálculo de direção para reduzir atraso: compute próximo sinal no final da vela atual
+        pending_target_idx = None
+        pending_direction = None
+        
         while self.running and self._check_stop_conditions():
             try:
-                # Payout cache warm-up (executed sparingly to avoid heavy vendor calls at gate)
+                # Periodically check if asset is still available
+                if hasattr(self, '_last_asset_check_mhi5'):
+                    if time.time() - self._last_asset_check_mhi5 > 300:  # Check every 5 minutes
+                        new_operation_type, new_asset = self._determine_operation_type(asset)
+                        if new_asset and new_asset != asset:
+                            self._log(f"Mudando de {asset} para {new_asset}", "INFO")
+                            asset = new_asset
+                            operation_type = new_operation_type
+                        self._last_asset_check_mhi5 = time.time()
+                else:
+                    self._last_asset_check_mhi5 = time.time()
+
+                # Pré-cálculo no fim da vela (evita atrasar a entrada no início da próxima)
                 try:
-                    warm_interval = int(getattr(self.config, 'mhi5_payout_warmup_sec', 120))
+                    st, dt = self._server_dt()
+                    sec = float(st) % 60.0
+                    minute_idx = int(st) // 60
+                    minute_in_block_30 = minute_idx % 30
                 except Exception:
-                    warm_interval = 120
-                try:
-                    last_warm = getattr(self, '_mhi5_last_payout_warm', 0)
-                except Exception:
-                    last_warm = 0
-                try:
-                    if time.time() - float(last_warm or 0) >= max(30, warm_interval):
-                        _ = self.api.get_payout(asset)
+                    sec = 0.0
+                    minute_idx = int(time.time()) // 60
+                    try:
+                        minute_in_block_30 = minute_idx % 30
+                    except Exception:
+                        minute_in_block_30 = 0
+
+                # Pré-cálculo apenas no minuto 29 do bloco (analisando as 3 últimas velas M5 fechadas),
+                # para entrar no minuto 0 do próximo bloco (30 min)
+                if minute_in_block_30 == 29 and 58.0 <= sec <= 59.9 and pending_target_idx != minute_idx + 1:
+                    # Calcular direção baseada nas 3 últimas velas M5 fechadas
+                    d = self._analyze_mhi_m5_pattern(asset)
+                    if d in ['put', 'call']:
+                        pending_direction = d
+                        pending_target_idx = minute_idx + 1
+                        # Pré-aquecer DIGITAL: assinar strike list com antecedência quando planejamos entrar na próxima vela
                         try:
-                            setattr(self, '_mhi5_last_payout_warm', time.time())
+                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                                with self.api._api_lock:
+                                    self.api.subscribe_strike_list(asset, 5)  # 5-minute expiration
                         except Exception:
                             pass
-                except Exception:
-                    # Never break loop due to warm-up failures
-                    pass
-                # Precise gate for MHI M5 entries (minutes 29 and 59 end)
+                        try:
+                            self._log(
+                                f"Pré-cálculo MHI M5 pronto | direção={d.upper()} | alvo_min_idx={pending_target_idx} | minuto_bloco30={minute_in_block_30}",
+                                "DEBUG"
+                            )
+                        except Exception:
+                            pass
+
+                # Gate exato no início da vela nova (minutos 0 e 30)
                 if self._is_entry_time_mhi_m5():
-                    direction = self._analyze_mhi_m5_pattern(asset)
+                    # Usar direção pré-calculada para o minuto atual, se existir
+                    st_now = self.api.get_server_timestamp()
+                    curr_minute_idx = int(st_now) // 60
+                    if pending_direction in ['put', 'call'] and pending_target_idx == curr_minute_idx:
+                        direction = pending_direction
+                        self._log(f"Usando direção pré-calculada: {direction.upper()}", "INFO")
+                    else:
+                        direction = self._analyze_mhi_m5_pattern(asset)
                     
                     if direction in ['put', 'call']:
+                        # Pré-aquecer DIGITAL imediatamente antes da entrada
+                        try:
+                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                                with self.api._api_lock:
+                                    self.api.subscribe_strike_list(asset, 5)
+                        except Exception:
+                            pass
                         self._execute_trade(asset, direction, 5, operation_type)  # 5-minute expiration
                         self._log("-" * 30, "INFO")
+                    # Resetar pré-cálculo após tentativa de entrada
+                    pending_direction = None
+                    pending_target_idx = None
                 
                 time.sleep(0.1)
                 
