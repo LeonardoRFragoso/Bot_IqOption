@@ -202,7 +202,7 @@ class ApiService {
   }
 
   // Operations methods
-  async getOperations(sessionId?: number): Promise<Operation[]> {
+  async getOperations(sessionId?: string | number): Promise<Operation[]> {
     const url = sessionId ? `/trading/operations/?session=${sessionId}` : '/trading/operations/';
     const response: AxiosResponse<Operation[]> = await this.api.get(url);
     return response.data;
@@ -214,8 +214,8 @@ class ApiService {
   }
 
   // Logs methods
-  async getTradingLogs(sessionId?: number): Promise<TradingLog[]> {
-    const url = sessionId ? `/trading/logs/?session=${sessionId}` : '/trading/logs/';
+  async getTradingLogs(sessionId?: string | number): Promise<TradingLog[]> {
+    const url = sessionId ? `/trading/logs/?session_id=${sessionId}` : '/trading/logs/';
     const response: AxiosResponse<TradingLog[]> = await this.api.get(url);
     return response.data;
   }

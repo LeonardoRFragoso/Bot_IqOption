@@ -992,8 +992,13 @@ class IQ_Option:
         self.api.digital_option_placed_id = None
 
         self.api.place_digital_option(instrument_id, amount)
-        while self.api.digital_option_placed_id == None:
-            pass
+        start_t = time.time()
+        # Wait up to 15s for provider to acknowledge placement to avoid infinite block
+        while self.api.digital_option_placed_id is None and time.time() - start_t < 15:
+            time.sleep(0.05)
+        if self.api.digital_option_placed_id is None:
+            logging.error('buy_digital_spot timeout waiting for digital_option_placed_id')
+            return False, None
         if isinstance(self.api.digital_option_placed_id, int):
             return True, self.api.digital_option_placed_id
         else:

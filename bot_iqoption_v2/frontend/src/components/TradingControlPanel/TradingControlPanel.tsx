@@ -94,14 +94,33 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       // Load real asset catalog results
       const catalogResults = await apiService.getAssetCatalog();
       
-      // Transform catalog results to Asset format
-      const realAssets: Asset[] = catalogResults.map((result: any) => ({
-        id: result.asset,
-        name: result.asset,
-        payout: result.payout || 80, // Default payout if not available
-        isOpen: true, // Assume open if in catalog
-        winRate: Math.round(result.gale2_rate || result.win_rate || 0) // Use gale2_rate as main indicator
-      }));
+      // 1) Deduplicate by asset symbol: keep the best score per asset
+      const bestByAsset = new Map<string, any>();
+      for (const r of catalogResults) {
+        const key = r.asset;
+        const score = Number(r.gale2_rate ?? r.win_rate ?? 0);
+        const current = bestByAsset.get(key);
+        if (!current) {
+          bestByAsset.set(key, r);
+        } else {
+          const curScore = Number(current.gale2_rate ?? current.win_rate ?? 0);
+          if (score > curScore) bestByAsset.set(key, r);
+        }
+      }
+      const uniqueResults = Array.from(bestByAsset.values());
+
+      // 2) Transform to Asset format (filter to FX-like symbols and their OTC variants)
+      const fxRegex = /^[A-Z]{3,6}(-OTC)?$/; // e.g., EURUSD, AUDCAD-OTC
+      const realAssets: Asset[] = uniqueResults
+        .filter((r: any) => typeof r.asset === 'string' && fxRegex.test(r.asset))
+        .map((result: any) => ({
+          id: result.asset,
+          name: result.asset,
+          payout: result.payout || 80, // Default payout if not available
+          isOpen: true, // Assume open if in catalog
+          // Keep winRate only for internal default selection (hidden in UI to avoid confusion)
+          winRate: Math.round(result.gale2_rate || result.win_rate || 0)
+        }));
 
       // Get market status for additional asset info (skip on light mode)
       if (!lightMode) {
@@ -148,7 +167,8 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
             realAssets.forEach(asset => {
               const p = payoutMap.get(asset.id);
               if (p) {
-                const best = Math.max(Number(p.binary) || 0, Number(p.turbo) || 0, Number(p.digital) || 0);
+                // TURBO ignorado por política: considerar somente binary/digital
+                const best = Math.max(Number(p.binary) || 0, Number(p.digital) || 0);
                 if (best > 0) asset.payout = Math.round(best);
               }
             });
@@ -186,6 +206,15 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
 
       // Use real data if available, otherwise fallback to defaults
       if (realAssets.length > 0) {
+        // 3) Sort assets: open first, then higher payout, then alphabetical
+        realAssets.sort((a, b) => {
+          const openScore = (b.isOpen ? 1 : 0) - (a.isOpen ? 1 : 0);
+          if (openScore !== 0) return openScore;
+          const payoutScore = (b.payout || 0) - (a.payout || 0);
+          if (payoutScore !== 0) return payoutScore;
+          return a.id.localeCompare(b.id);
+        });
+
         setAssets(realAssets);
         
         // Prefer the best open asset; if none, pick the overall best by winRate
@@ -451,11 +480,12 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
                           size="small" 
                           color="info"
                         />
-                        {asset.winRate && (
+                        {asset.id.endsWith('-OTC') && (
                           <Chip 
-                            label={`${asset.winRate}%`} 
+                            label="OTC" 
                             size="small" 
-                            color={asset.winRate > 70 ? 'success' : 'warning'}
+                            color="secondary"
+                            variant="outlined"
                           />
                         )}
                         {!asset.isOpen && (

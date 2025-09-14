@@ -16,6 +16,11 @@ import {
   Alert,
   IconButton,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
 } from '@mui/material';
 import { Refresh, Visibility } from '@mui/icons-material';
 import { useOperations } from '../../hooks/useApi';
@@ -34,6 +39,8 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
 }) => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(maxRows || 10);
+  const [selected, setSelected] = useState<Operation | null>(null);
+  const [open, setOpen] = useState(false);
   
   const { data: operations, loading, error, refetch } = useOperations(sessionId);
 
@@ -67,6 +74,16 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
 
   const getDirectionColor = (direction: string) => {
     return direction === 'call' ? 'success' : 'error';
+  };
+
+  const handleOpenDetails = (op: Operation) => {
+    setSelected(op);
+    setOpen(true);
+  };
+
+  const handleCloseDetails = () => {
+    setOpen(false);
+    setSelected(null);
   };
 
   if (loading) {
@@ -210,7 +227,7 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
                     </TableCell>
                     <TableCell>
                       <Tooltip title="Ver detalhes">
-                        <IconButton size="small">
+                        <IconButton size="small" onClick={() => handleOpenDetails(operation)}>
                           <Visibility fontSize="small" />
                         </IconButton>
                       </Tooltip>
@@ -238,6 +255,57 @@ const OperationsTable: React.FC<OperationsTableProps> = ({
           />
         )}
       </CardContent>
+      {/* Details Modal */}
+      <Dialog open={open} onClose={handleCloseDetails} fullWidth maxWidth="sm">
+        <DialogTitle>Detalhes da Operação</DialogTitle>
+        <DialogContent dividers>
+          {selected && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+              <Box>
+                <Typography variant="caption" color="textSecondary">Ativo</Typography>
+                <Typography variant="body1" fontWeight={600}>{selected.asset}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="textSecondary">Direção</Typography>
+                <Chip label={selected.direction.toUpperCase()} color={getDirectionColor(selected.direction)} size="small" />
+              </Box>
+              <Box>
+                <Typography variant="caption" color="textSecondary">Valor</Typography>
+                <Typography variant="body1">{formatCurrency(selected.amount)}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="textSecondary">Estratégia</Typography>
+                <Typography variant="body1">{selected.strategy_used}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="textSecondary">Resultado</Typography>
+                {selected.result ? (
+                  <Chip label={selected.result === 'win' ? 'WIN' : 'LOSS'} color={getResultColor(selected.result)} size="small" />
+                ) : (
+                  <Chip label="PENDENTE" color="warning" size="small" />
+                )}
+              </Box>
+              <Box>
+                <Typography variant="caption" color="textSecondary">P&L</Typography>
+                <Typography variant="body1" color={(selected.profit_loss ?? 0) >= 0 ? 'success.main' : 'error.main'}>
+                  {formatCurrency(selected.profit_loss ?? 0)}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="textSecondary">Martingale</Typography>
+                <Typography variant="body1">M{selected.martingale_level}{selected.soros_level > 0 ? ` • S${selected.soros_level}` : ''}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="textSecondary">Horário</Typography>
+                <Typography variant="body1">{formatDateTime(selected.created_at)}</Typography>
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDetails}>Fechar</Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 };

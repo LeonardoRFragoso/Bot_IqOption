@@ -49,9 +49,11 @@ def run_trading_loop(user, session, strategy, api):
             session.status = 'STOPPED'
             session.stopped_at = timezone.now()
             session.save()
-        # Remove from active threads
-        if session.id in trading_threads:
-            del trading_threads[session.id]
+        # Remove from active threads (idempotent, avoid race conditions)
+        try:
+            trading_threads.pop(session.id, None)
+        except Exception:
+            pass
         # Disconnect and drop the API instance to avoid lingering sessions
         try:
             if api:
@@ -270,28 +272,40 @@ def stop_trading(request):
     serializer.is_valid(raise_exception=True)
     
     session_id = serializer.validated_data['session_id']
-    session = get_object_or_404(
-        TradingSession,
+    # Make this endpoint idempotent: do not restrict by status
+    session = TradingSession.objects.filter(
         id=session_id,
         user=request.user,
-        status__in=['RUNNING', 'PAUSED']
-    )
+    ).first()
+    if not session:
+        # If the session does not exist or does not belong to the user, treat as no-op
+        return Response({'message': 'Sessão não encontrada; nada para parar.'})
     
-    # Stop strategy if running
-    if session_id in trading_threads:
-        thread_info = trading_threads[session_id]
-        strategy = thread_info['strategy']
-        strategy.stop()
-        
-        # Wait for thread to finish (max 10 seconds)
-        thread_info['thread'].join(timeout=10)
-        
-        del trading_threads[session_id]
+    # Stop strategy if running (race-safe)
+    thread_info = trading_threads.get(session_id)
+    if thread_info:
+        try:
+            strategy = thread_info.get('strategy')
+            if strategy:
+                strategy.stop()
+            # Wait for thread to finish (max 10 seconds)
+            t = thread_info.get('thread')
+            if t:
+                t.join(timeout=10)
+        except Exception:
+            pass
+        finally:
+            # Safe removal even if another cleanup already removed it
+            try:
+                trading_threads.pop(session_id, None)
+            except Exception:
+                pass
     
-    # Update session status
-    session.status = 'STOPPED'
-    session.stopped_at = timezone.now()
-    session.save()
+    # Update session status idempotently
+    if session.status != 'STOPPED':
+        session.status = 'STOPPED'
+        session.stopped_at = timezone.now()
+        session.save()
     # Proactively disconnect and remove API instance when user stops trading
     try:
         IQOptionManager.remove_instance(request.user)
@@ -416,7 +430,7 @@ def catalog_assets(request):
 def get_catalog_results(request):
     """Get asset catalog results"""
     
-    catalogs = AssetCatalog.objects.filter(user=request.user).order_by('-win_rate')
+    catalogs = AssetCatalog.objects.filter(user=request.user).order_by('-gale3_rate')
     serializer = AssetCatalogSerializer(catalogs, many=True)
     
     return Response(serializer.data)
@@ -452,11 +466,17 @@ class OperationListView(generics.ListAPIView):
     
     serializer_class = OperationSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
     
     def get_queryset(self):
-        return Operation.objects.filter(
-            session__user=self.request.user
-        ).order_by('-created_at')
+        qs = Operation.objects.filter(session__user=self.request.user)
+        session_id = self.request.query_params.get('session')
+        if session_id:
+            try:
+                qs = qs.filter(session_id=session_id)
+            except Exception:
+                pass
+        return qs.order_by('-created_at')
 
 
 @api_view(['GET'])
@@ -490,10 +510,9 @@ def get_dashboard_data(request):
         status__in=['RUNNING', 'PAUSED']
     ).first()
     
-    # Recent operations (last 20)
-    recent_operations = Operation.objects.filter(
-        session__user=user
-    ).order_by('-created_at')[:20]
+    # All user operations (used for KPIs) and recent slice for UI table
+    all_operations_qs = Operation.objects.filter(session__user=user)
+    recent_operations = all_operations_qs.order_by('-created_at')[:20]
     
     # Session statistics
     sessions = TradingSession.objects.filter(user=user)
@@ -505,14 +524,10 @@ def get_dashboard_data(request):
         total=Sum('total_profit')
     )['total'] or 0
     
-    total_operations = sessions.aggregate(
-        total=Sum('total_operations')
-    )['total'] or 0
-    
-    total_wins = sessions.aggregate(
-        total=Sum('wins')
-    )['total'] or 0
-    
+    # Prefer counting operations from Operation table for accuracy
+    total_operations = all_operations_qs.count()
+    total_wins = all_operations_qs.filter(result='WIN').count()
+    total_losses = all_operations_qs.filter(result='LOSS').count()
     overall_win_rate = (total_wins / total_operations * 100) if total_operations > 0 else 0
     
     # Best performing strategy and asset
@@ -548,6 +563,75 @@ def get_dashboard_data(request):
         connection_status = api.connected
         if connection_status:
             account_balance = api.get_balance()
+    # Fallback: if not connected (e.g., dev server reload), use session's stored balance
+    if (not account_balance) or (float(account_balance) == 0.0):
+        try:
+            if current_session and current_session.current_balance is not None:
+                account_balance = float(current_session.current_balance)
+            elif not current_session:
+                last_session = TradingSession.objects.filter(user=user).order_by('-started_at').first()
+                if last_session and last_session.current_balance is not None:
+                    account_balance = float(last_session.current_balance)
+        except Exception:
+            pass
+    
+    # Intraday P&L and performance series (use explicit local day boundaries to avoid TZ mismatches)
+    now_local = timezone.localtime()
+    start_of_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
+    todays_ops_qs = (
+        all_operations_qs
+        .filter(created_at__gte=start_of_day, created_at__lt=end_of_day)
+        .order_by('created_at')
+    )
+    todays_ops = list(todays_ops_qs)
+    # Sum today's P&L first
+    total_today = 0.0
+    for op in todays_ops:
+        try:
+            total_today += float(op.profit_loss)
+        except Exception:
+            pass
+    pnl_today = round(total_today, 2)
+    # Estimate start-of-day balance to build a realistic balance curve
+    try:
+        start_of_day_balance = float(account_balance) - pnl_today
+    except Exception:
+        start_of_day_balance = 0.0
+    performance_data = []
+    running_pnl = 0.0
+    for op in todays_ops:
+        try:
+            pl = float(op.profit_loss)
+        except Exception:
+            pl = 0.0
+        running_pnl += pl
+        current_balance_point = start_of_day_balance + running_pnl
+        performance_data.append({
+            'time': op.created_at.strftime('%H:%M'),
+            'pnl': round(running_pnl, 2),
+            'balance': round(current_balance_point, 2),
+            'operations': 1
+        })
+    
+    # Strategy performance summary
+    strategy_rows = sessions.values('strategy').annotate(
+        ops=Sum('total_operations'),
+        wins=Sum('wins'),
+        profit=Sum('total_profit')
+    ).filter(ops__gt=0)
+    strategy_performance = []
+    for row in strategy_rows:
+        ops = row['ops'] or 0
+        wins = row['wins'] or 0
+        profit = float(row['profit'] or 0)
+        win_rate = round((wins / ops * 100), 2) if ops > 0 else 0
+        strategy_performance.append({
+            'name': row['strategy'],
+            'winRate': win_rate,
+            'operations': ops,
+            'profit': profit,
+        })
     
     dashboard_data = {
         'current_session': TradingSessionSerializer(current_session).data if current_session else None,
@@ -555,7 +639,19 @@ def get_dashboard_data(request):
         'session_stats': session_stats,
         'recent_logs': TradingLogSerializer(recent_logs, many=True).data,
         'account_balance': account_balance,
-        'connection_status': connection_status
+        'connection_status': connection_status,
+        # Aliases and extended KPIs expected by frontend
+        'balance': account_balance,
+        'pnl_today': pnl_today,
+        'total_operations': total_operations,
+        'win_rate': round(overall_win_rate, 2),
+        'wins': total_wins,
+        'losses': total_losses,
+        'performance_data': performance_data,
+        'strategy_performance': strategy_performance,
+        # Back-compat optional aliases
+        'total_balance': account_balance,
+        'today_profit_loss': pnl_today,
     }
     
     return Response(dashboard_data)
@@ -703,7 +799,7 @@ def get_payouts(request):
         # IMPORTANT: Do NOT establish a new connection here.
         # If not connected, return fallback payouts to avoid implicit login/connect on dashboard load.
         if not api.connected:
-            payouts = [{'asset': a, 'binary': 80, 'turbo': 80, 'digital': 80} for a in assets]
+            payouts = [{'asset': a, 'binary': 80, 'turbo': 0, 'digital': 80} for a in assets]
             return Response({'payouts': payouts, 'count': len(payouts), 'connected': False})
 
         # When already connected, ensure account type and fetch live payouts
@@ -717,7 +813,7 @@ def get_payouts(request):
                 p = api.get_payout(a)
                 payouts.append({'asset': a, **p})
             except Exception as e:
-                payouts.append({'asset': a, 'binary': 80, 'turbo': 80, 'digital': 80, 'error': str(e)})
+                payouts.append({'asset': a, 'binary': 80, 'turbo': 0, 'digital': 80, 'error': str(e)})
 
         return Response({'payouts': payouts, 'count': len(payouts), 'connected': True})
 

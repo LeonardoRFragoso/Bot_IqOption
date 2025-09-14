@@ -61,43 +61,100 @@ class AssetCatalogService:
                 return _is_standard_fx(base_sym)
             return False
 
-        # Add clean standard forex pairs first (e.g., EURUSD, GBPUSD)
+        # Prepare candidates split between FX and FX-OTC
+        fx_candidates = []
+        otc_candidates = []
         for asset in all_assets:
-            if len(reliable_assets) >= 25:
-                break
-            if (
-                asset not in reliable_assets and
-                '-op' not in asset and
-                '/' not in asset and
-                '_Index' not in asset and
-                _is_standard_fx(asset)
-            ):
-                reliable_assets.append(asset)
-                self._log(f"Ativo forex incluído: {asset}", "DEBUG")
+            try:
+                if (
+                    '-op' in asset or '/' in asset or '_Index' in asset
+                ):
+                    continue
+                if _is_standard_fx_otc(asset):
+                    if asset not in otc_candidates:
+                        otc_candidates.append(asset)
+                elif _is_standard_fx(asset):
+                    if asset not in fx_candidates:
+                        fx_candidates.append(asset)
+            except Exception:
+                continue
 
-        # If still room, include OTC variants of forex pairs (e.g., EURUSD-OTC)
-        for asset in all_assets:
-            if len(reliable_assets) >= 25:
-                break
-            if (
-                asset not in reliable_assets and
-                '-op' not in asset and
-                '/' not in asset and
-                '_Index' not in asset and
-                _is_standard_fx_otc(asset)
-            ):
+        # Decide ordering: when OTC dominates available assets, include OTC first
+        prefer_otc = len(otc_candidates) >= len(fx_candidates) and len(otc_candidates) > 0
+        if prefer_otc:
+            self._log(
+                f"OTC predominante na plataforma ({len(otc_candidates)} OTC vs {len(fx_candidates)} FX) - priorizando OTC na catalogação",
+                "INFO"
+            )
+
+        # Add assets according to preference, up to a max of 25 before ACTIVES check
+        ordered_blocks = [otc_candidates, fx_candidates] if prefer_otc else [fx_candidates, otc_candidates]
+        for block in ordered_blocks:
+            for asset in block:
+                if len(reliable_assets) >= 25:
+                    break
+                if asset in reliable_assets:
+                    continue
                 reliable_assets.append(asset)
-                self._log(f"Ativo OTC incluído: {asset}", "DEBUG")
+                if _is_standard_fx_otc(asset):
+                    self._log(f"Ativo OTC incluído: {asset}", "DEBUG")
+                else:
+                    self._log(f"Ativo forex incluído: {asset}", "DEBUG")
+
+        # Guarantee a minimum share of OTC when they exist (e.g., at least 10)
+        try:
+            min_otc = 10
+            current_otc = len([a for a in reliable_assets if _is_standard_fx_otc(a)])
+            if len(otc_candidates) > 0 and current_otc < min_otc:
+                for a in otc_candidates:
+                    if len(reliable_assets) >= 25:
+                        break
+                    if a not in reliable_assets:
+                        reliable_assets.append(a)
+                        self._log(f"Ativo OTC incluído (mínimo garantido): {a}", "DEBUG")
+        except Exception:
+            pass
         
         # Filter only by ACTIVES mapping (avoid premature exclusion by payout)
         assets = []
         for asset in reliable_assets:
-            if asset not in IQC.ACTIVES:
-                self._log(f"Sem mapeamento ACTIVES, ignorando: {asset}", "DEBUG")
+            try:
+                mapped = asset in IQC.ACTIVES
+                if not mapped and hasattr(self.api, 'ensure_active_mapping'):
+                    mapped = self.api.ensure_active_mapping(asset)
+                if not mapped:
+                    self._log(f"Sem mapeamento ACTIVES, ignorando: {asset}", "DEBUG")
+                    continue
+                assets.append(asset)
+                if len(assets) >= 25:
+                    break
+            except Exception:
+                self._log(f"Erro ao validar ACTIVES para: {asset}", "DEBUG")
                 continue
-            assets.append(asset)
-            if len(assets) >= 25:
-                break
+
+        # Backfill: if after mapping we have less than 25, try to complete from the other pool
+        if len(assets) < 25:
+            self._log(f"Backfill de ativos para atingir 25 (atual: {len(assets)})", "DEBUG")
+            supplement_blocks = [fx_candidates, otc_candidates] if prefer_otc else [otc_candidates, fx_candidates]
+            for block in supplement_blocks:
+                for candidate in block:
+                    if len(assets) >= 25:
+                        break
+                    if candidate in assets or candidate in reliable_assets:
+                        continue
+                    try:
+                        mapped = candidate in IQC.ACTIVES
+                        if not mapped and hasattr(self.api, 'ensure_active_mapping'):
+                            mapped = self.api.ensure_active_mapping(candidate)
+                        if not mapped:
+                            continue
+                        assets.append(candidate)
+                        if _is_standard_fx_otc(candidate):
+                            self._log(f"Ativo OTC incluído no backfill: {candidate}", "DEBUG")
+                        else:
+                            self._log(f"Ativo forex incluído no backfill: {candidate}", "DEBUG")
+                    except Exception:
+                        continue
         
         self._log(f"Encontrados {len(assets)} ativos confiáveis para análise (de {len(all_assets)} disponíveis)", "INFO")
         

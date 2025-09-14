@@ -24,15 +24,88 @@ class TradingSessionSerializer(serializers.ModelSerializer):
 
 
 class OperationSerializer(serializers.ModelSerializer):
-    """Serializer for trading operations"""
+    """Serializer for trading operations, exposing aliases expected by the frontend."""
+    
+    # Aliases and normalized fields
+    amount = serializers.SerializerMethodField()
+    direction = serializers.SerializerMethodField()
+    result = serializers.SerializerMethodField()
+    strategy_used = serializers.SerializerMethodField()
+    martingale_level = serializers.SerializerMethodField()
+    soros_level = serializers.SerializerMethodField()
+    session = serializers.SerializerMethodField()
+    entry_price = serializers.SerializerMethodField()
+    profit_loss = serializers.SerializerMethodField()
     
     class Meta:
         model = Operation
         fields = [
-            'id', 'asset', 'direction', 'entry_value', 'expiration_time',
-            'operation_type', 'result', 'profit_loss', 'created_at', 'closed_at'
+            # Original fields
+            'id', 'asset', 'expiration_time', 'operation_type', 'profit_loss', 'created_at', 'closed_at',
+            # Aliases / normalized
+            'amount', 'entry_price', 'direction', 'result', 'strategy_used', 'martingale_level', 'soros_level', 'session',
         ]
         read_only_fields = ['id', 'created_at', 'closed_at']
+    
+    def get_amount(self, obj):
+        try:
+            return float(obj.entry_value)
+        except Exception:
+            return 0.0
+    
+    def get_entry_price(self, obj):
+        try:
+            return float(obj.entry_value)
+        except Exception:
+            return 0.0
+    
+    def get_direction(self, obj):
+        try:
+            return (obj.direction or '').lower()
+        except Exception:
+            return None
+    
+    def get_result(self, obj):
+        try:
+            r = (obj.result or '').lower()
+            return r if r in ['win', 'loss', 'draw', 'pending'] else None
+        except Exception:
+            return None
+    
+    def get_strategy_used(self, obj):
+        try:
+            return obj.session.strategy
+        except Exception:
+            return None
+    
+    def get_martingale_level(self, obj):
+        try:
+            mapping = {
+                'ENTRY': 0,
+                'GALE1': 1,
+                'GALE2': 2,
+                'GALE3': 3,
+            }
+            return mapping.get(str(obj.operation_type).upper(), 0)
+        except Exception:
+            return 0
+    
+    def get_soros_level(self, obj):
+        # Soros level not tracked per operation; expose 0 for now
+        return 0
+    
+    def get_session(self, obj):
+        try:
+            # return UUID as string
+            return str(obj.session_id)
+        except Exception:
+            return None
+
+    def get_profit_loss(self, obj):
+        try:
+            return float(obj.profit_loss)
+        except Exception:
+            return 0.0
 
 
 class AssetCatalogSerializer(serializers.ModelSerializer):

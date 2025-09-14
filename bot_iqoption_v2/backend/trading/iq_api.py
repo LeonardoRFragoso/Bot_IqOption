@@ -9,8 +9,19 @@ import traceback
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
-from iqoptionapi.stable_api import IQ_Option
-import iqoptionapi.constants as IQC
+import os
+import sys
+# Garante que o vendor local (backend/iqoptionapi) seja priorizado sobre site-packages
+_BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+# Importa o vendor local por caminho absoluto de pacote
+from iqoptionapi.stable_api import IQ_Option  # type: ignore
+import iqoptionapi.constants as IQC  # type: ignore
+from iqoptionapi.expiration import get_expiration_time  # type: ignore
+import iqoptionapi.global_value as IQGV  # type: ignore
+import sys
 from django.conf import settings
 from .models import TradingLog, MarketData
 
@@ -28,6 +39,10 @@ class IQOptionAPI:
         self.account_type = 'PRACTICE'
         self.max_reconnect_attempts = 5
         self._api_lock = threading.RLock()
+        # Track the last effective order type actually placed at the vendor ('digital' or 'binary')
+        self._last_effective_option_type: Optional[str] = None
+        # Map each order_id to the effective option type actually used ('digital' or 'binary')
+        self._order_type_by_id: Dict[str, str] = {}
         
     def connect(self) -> Tuple[bool, str]:
         """Connect to IQ Option platform"""
@@ -35,9 +50,15 @@ class IQOptionAPI:
             with self._api_lock:
                 self.api = IQ_Option(self.email, self.password)
                 check, reason = self.api.connect()
-            
+        
             if check:
                 self.connected = True
+                try:
+                    mod = sys.modules.get(IQ_Option.__module__)
+                    mod_path = getattr(mod, '__file__', 'unknown')
+                    self._log_message(f"Vendor iqoptionapi em uso: {mod_path}", "DEBUG")
+                except Exception:
+                    pass
                 self._log_message("Conectado com sucesso à IQ Option", "INFO")
                 return True, "Conectado com sucesso"
             else:
@@ -178,7 +199,32 @@ class IQOptionAPI:
         except Exception as e:
             self._log_message(f"Erro ao obter perfil: {str(e)}", "ERROR")
             return None
+
+    def get_last_effective_option_type(self) -> Optional[str]:
+        """Return the last effective option type ('digital' or 'binary') used when placing an order."""
+        try:
+            return self._last_effective_option_type
+        except Exception:
+            return None
     
+    def ensure_active_mapping(self, asset: str) -> bool:
+        """Ensure the IQC.ACTIVES mapping contains the given asset symbol.
+        Attempts to update the mapping once using the underlying API. Returns True if present after update.
+        """
+        try:
+            if asset in IQC.ACTIVES:
+                return True
+            if not self.connected or not self.api:
+                return False
+            with self._api_lock:
+                try:
+                    self.api.update_ACTIVES_OPCODE()
+                except Exception:
+                    pass
+            return asset in IQC.ACTIVES
+        except Exception:
+            return False
+
     def get_candles(self, asset: str, timeframe: int, count: int = 100, attempts: int = 5) -> Optional[List[Dict]]:
         """Get candle data with retry mechanism and auto-reconnection"""
         if not self.connected or not self.api:
@@ -298,8 +344,8 @@ class IQOptionAPI:
             
             assets = []
             
-            # Tentar extrair ativos de diferentes estruturas possíveis com tratamento robusto
-            for market_type in ['digital', 'turbo', 'binary']:
+            # Tentar extrair ativos apenas de DIGITAL e BINARY (sem TURBO)
+            for market_type in ['digital', 'binary']:
                 try:
                     extracted = self._extract_assets_from_structure(all_assets, market_type)
                     if extracted:
@@ -545,17 +591,17 @@ class IQOptionAPI:
         for preferred in preferred_assets:
             if preferred in allowed_assets:
                 payout = self.get_payout(preferred)
-                total_payout = payout['binary'] + payout['turbo'] + payout['digital']
+                total_payout = (payout['binary'] or 0) + (payout['digital'] or 0)
                 if total_payout > 0:
-                    self._log_message(f"Ativo selecionado: {preferred} (Payouts: Binary: {payout['binary']}%, Turbo: {payout['turbo']}%, Digital: {payout['digital']}%)", "INFO")
+                    self._log_message(f"Ativo selecionado: {preferred} (Payouts: Binary: {payout['binary']}%, Digital: {payout['digital']}%)", "INFO")
                     return preferred
         
         # If no preferred asset is available, take the first one with payout > 0
         for asset in allowed_assets:
             payout = self.get_payout(asset)
-            total_payout = payout['binary'] + payout['turbo'] + payout['digital']
+            total_payout = (payout['binary'] or 0) + (payout['digital'] or 0)
             if total_payout > 0:
-                self._log_message(f"Ativo alternativo selecionado: {asset} (Payouts: Binary: {payout['binary']}%, Turbo: {payout['turbo']}%, Digital: {payout['digital']}%)", "INFO")
+                self._log_message(f"Ativo alternativo selecionado: {asset} (Payouts: Binary: {payout['binary']}%, Digital: {payout['digital']}%)", "INFO")
                 return asset
         
         # Silenciar warning recorrente - usar apenas DEBUG
@@ -775,104 +821,11 @@ class IQOptionAPI:
             except Exception as e:
                 self._log_message(f"Erro ao obter payout binary para {asset}: {str(e)}", "DEBUG")
             
-            # Turbo payout
+            # TURBO desativado: manter payout turbo em 0
             try:
-                asset_data = None
-                profit_data = None
-                
-                # Tentar acessar dados turbo com verificações robustas
-                if isinstance(all_assets, dict) and 'turbo' in all_assets:
-                    turbo_data = all_assets['turbo']
-                    if isinstance(turbo_data, dict):
-                        # Método 1: Acesso direto
-                        for cand in candidates:
-                            if cand in turbo_data:
-                                asset_data = turbo_data[cand]
-                                break
-                        # Método 1b: Acesso por active_id quando chaves são inteiras
-                        if asset_data is None and candidate_ids:
-                            for act_id in candidate_ids:
-                                if act_id in turbo_data:
-                                    asset_data = turbo_data[act_id]
-                                    break
-                        # Método 2: Acesso via 'underlying' com verificação segura
-                        if 'underlying' in turbo_data:
-                            try:
-                                underlying = turbo_data['underlying']
-                                # Verificar se underlying é dict e não lista
-                                if isinstance(underlying, dict):
-                                    for cand in candidates:
-                                        if cand in underlying:
-                                            asset_data = underlying[cand]
-                                            break
-                                    # IDs dentro de underlying
-                                    if asset_data is None and candidate_ids:
-                                        for act_id in candidate_ids:
-                                            if act_id in underlying:
-                                                asset_data = underlying[act_id]
-                                                break
-                                elif isinstance(underlying, list):
-                                    # Se for lista, procurar pelo asset
-                                    for item in underlying:
-                                        if isinstance(item, dict) and item.get('active_id') in candidates:
-                                            asset_data = item
-                                            break
-                            except (KeyError, TypeError, AttributeError, Exception):
-                                pass
-                
-                # Tentar acessar dados de profit com verificações robustas
-                if isinstance(profit, dict):
-                    for cand in candidates:
-                        try:
-                            if cand in profit:
-                                asset_profit = profit[cand]
-                                if isinstance(asset_profit, dict) and 'turbo' in asset_profit:
-                                    profit_data = asset_profit['turbo']
-                                    if profit_data:
-                                        break
-                        except (KeyError, TypeError, AttributeError):
-                            continue
-                    # Tentar via active_id quando as chaves são inteiras
-                    if not profit_data and candidate_ids:
-                        for act_id in candidate_ids:
-                            try:
-                                if act_id in profit:
-                                    asset_profit = profit[act_id]
-                                    if isinstance(asset_profit, dict) and 'turbo' in asset_profit:
-                                        profit_data = asset_profit['turbo']
-                                    elif isinstance(asset_profit, (int, float)):
-                                        profit_data = asset_profit
-                                    if profit_data:
-                                        break
-                            except (KeyError, TypeError, AttributeError):
-                                continue
-                elif isinstance(profit, list):
-                    # Se profit for lista, procurar pelo asset
-                    try:
-                        for item in profit:
-                            if isinstance(item, dict) and item.get('active_id') in candidates:
-                                if 'turbo' in item:
-                                    profit_data = item['turbo']
-                                break
-                    except (KeyError, TypeError, AttributeError):
-                        pass
-                
-                # Determine openness more flexibly
-                is_open = None
-                if isinstance(asset_data, dict):
-                    if 'open' in asset_data:
-                        is_open = bool(asset_data.get('open'))
-                    elif 'enabled' in asset_data:
-                        is_open = bool(asset_data.get('enabled'))
-                    elif 'active' in asset_data:
-                        is_open = bool(asset_data.get('active'))
-
-                if (profit_data and isinstance(profit_data, (int, float)) and profit_data > 0 
-                    and (is_open is not False)):
-                    result['turbo'] = round(profit_data * 100, 2)
-                    
-            except Exception as e:
-                self._log_message(f"Erro ao obter payout turbo para {asset}: {str(e)}", "DEBUG")
+                result['turbo'] = 0
+            except Exception:
+                pass
             
             # Digital payout
             try:
@@ -881,11 +834,11 @@ class IQOptionAPI:
                 if hasattr(self.api, 'get_digital_payout') and callable(getattr(self.api, 'get_digital_payout', None)):
                     with self._api_lock:
                         digital_payout_val = self.api.get_digital_payout(asset)
-                # Se o método não existir ou não retornar valor válido, usar heurística (máximo entre binary/turbo)
+                # Se o método não existir ou não retornar valor válido, usar heurística baseada no binary
                 if isinstance(digital_payout_val, (int, float)) and digital_payout_val > 0:
                     result['digital'] = round(digital_payout_val, 2)
                 else:
-                    heuristic = max(result['binary'], result['turbo'])
+                    heuristic = result['binary']
                     if heuristic > 0:
                         result['digital'] = heuristic
             except Exception as payout_e:
@@ -893,9 +846,9 @@ class IQOptionAPI:
                 self._log_message(f"Payout digital não disponível para {asset} (usando heurística). Detalhe: {str(payout_e)}", "DEBUG")
             
             # Se nenhum payout foi determinado, usar fallback padrão para evitar zeros silenciosos
-            if result['binary'] == 0 and result['turbo'] == 0 and result['digital'] == 0:
-                self._log_message(f"Payouts indisponíveis para {asset}, aplicando fallback padrão de 80%", "DEBUG")
-                return {'binary': 80, 'turbo': 80, 'digital': 80}
+            if result['binary'] == 0 and result['digital'] == 0:
+                self._log_message(f"Payouts indisponíveis para {asset}, aplicando fallback padrão (binary/digital=80%)", "DEBUG")
+                return {'binary': 80, 'turbo': 0, 'digital': 80}
             
             return result
             
@@ -904,7 +857,7 @@ class IQOptionAPI:
             error_msg = str(e).lower()
             if 'underlying' not in error_msg:
                 self._log_message(f"Erro geral ao obter payout para {asset}: {str(e)}", "ERROR")
-            return {'binary': 80, 'turbo': 80, 'digital': 80}  # Default payout instead of 0
+            return {'binary': 80, 'turbo': 0, 'digital': 80}  # Default payout, TURBO desativado
     
     def buy_option(self, asset: str, amount: float, direction: str, expiration: int, option_type: str = 'binary') -> Tuple[bool, Optional[str]]:
         """Place a buy order"""
@@ -912,25 +865,329 @@ class IQOptionAPI:
             return False, None
         
         try:
-            with self._api_lock:
+            # Normalize inputs
+            option_type = (option_type or 'binary').lower().strip()
+            direction = (direction or '').lower().strip()
+            amount = round(float(amount), 2)
+
+            # Ensure ACTIVES mapping exists for non-digital orders only
+            if option_type != 'digital':
+                try:
+                    mapped = asset in IQC.ACTIVES
+                    if not mapped and hasattr(self, 'ensure_active_mapping'):
+                        mapped = self.ensure_active_mapping(asset)
+                    if not mapped:
+                        self._log_message(f"Ativo sem mapeamento ACTIVES para compra: {asset}", "WARNING")
+                        return False, None
+                except Exception:
+                    pass
+
+            # Quick openness check for digital to avoid vendor hangs — with FAST PATH at candle start
+            fast_path = False
+            try:
                 if option_type == 'digital':
-                    # stable_api exposes buy_digital_spot(active, amount, action, duration)
-                    success, order_id = self.api.buy_digital_spot(asset, amount, direction.lower(), expiration)
-                else:
-                    success, order_id = self.api.buy(amount, asset, direction.lower(), expiration)
-        
+                    st_fp = float(self.get_server_timestamp())
+                    sec_fp = st_fp % 60.0
+                    # In the first ~1.2s of the minute for 1m ops, skip heavy vendor calls
+                    if int(expiration) == 1 and sec_fp <= 1.2:
+                        fast_path = True
+            except Exception:
+                fast_path = False
+
+            if option_type == 'digital' and not fast_path:
+                try:
+                    payouts = self.get_payout(asset)
+                    if payouts.get('digital', 0) <= 0:
+                        self._log_message(f"Digital fechado para {asset}, impedindo compra", "WARNING")
+                        return False, None
+                    # Verify open state as well
+                    if hasattr(self, 'is_asset_open') and not self.is_asset_open(asset, 'digital'):
+                        self._log_message(f"Digital não está aberto para {asset} segundo open_time", "WARNING")
+                        return False, None
+                except Exception:
+                    pass
+            elif option_type == 'digital' and fast_path:
+                # Informative log to indicate we are prioritizing timing over pre-checks
+                try:
+                    self._log_message("FAST PATH digital 1m: pulando checagens pesadas para entrar no segundo 00", "DEBUG")
+                except Exception:
+                    pass
+
+            self._log_message(
+                f"Enviando ordem | ativo={asset} | tipo={option_type} | direcao={direction} | expiracao={expiration}m | valor=${amount} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
+                "DEBUG"
+            )
+
+            # Worker to perform the blocking buy call
+            result_holder = {'done': False, 'success': False, 'order_id': None, 'error': None}
+
+            # Guardar para não enviar DIGITAL no último segundo da vela (reduz timeouts do provedor)
+            if option_type == 'digital':
+                try:
+                    st = self.get_server_timestamp()
+                    rem = 60.0 - (float(st) % 60.0)
+                    if str(expiration).strip() in ('1', '1.0') and rem < 2.0:
+                        wait_for = max(0.0, 2.1 - rem)
+                        self._log_message(f"Esperando {wait_for:.2f}s pela virada do minuto antes de enviar ordem digital...", "DEBUG")
+                        time.sleep(wait_for)
+                except Exception:
+                    pass
+
+            def _buy_worker():
+                try:
+                    if option_type == 'digital':
+                        # Construir instrument_id e enviar via websocket sem bloquear indefinidamente
+                        action = 'P' if direction == 'put' else 'C'
+                        # Use wrapper to get server timestamp; IQ_Option doesn't expose .timesync directly
+                        ts = int(self.get_server_timestamp())
+                        # Evitar borda de minuto para 1m (ACK pode falhar quando muito próximo do flip)
+                        if int(expiration) == 1:
+                            try:
+                                rem = (60 - (ts % 60)) % 60
+                                if rem < 2:
+                                    self._log_message("Aguardando 2s para evitar borda de minuto (digital 1m)", "DEBUG")
+                                    time.sleep(2.2)
+                                    ts = int(self.get_server_timestamp())
+                            except Exception:
+                                pass
+                        # Garantir que o ativo está mapeado no vendor (necessário para cotações digitais)
+                        try:
+                            self.ensure_active_mapping(asset)
+                        except Exception:
+                            pass
+                        if int(expiration) == 1:
+                            exp, _ = get_expiration_time(ts, 1)
+                        else:
+                            now_date = datetime.fromtimestamp(ts) + timedelta(minutes=1, seconds=30)
+                            while True:
+                                if now_date.minute % int(expiration) == 0 and time.mktime(now_date.timetuple()) - ts > 30:
+                                    break
+                                now_date = now_date + timedelta(minutes=1)
+                            exp = time.mktime(now_date.timetuple())
+                        date_formatted = datetime.utcfromtimestamp(exp).strftime("%Y%m%d%H%M")
+                        instrument_id = f"do{asset}{date_formatted}PT{int(expiration)}M{action}SPT"
+                        # Pré-aquecimento: assinar lista de strikes para reduzir latência do provedor
+                        try:
+                            with self._api_lock:
+                                if hasattr(self.api, 'subscribe_strike_list'):
+                                    self.api.subscribe_strike_list(asset, int(expiration))
+                        except Exception:
+                            pass
+                        # Espera ativa curta pelas cotações digitais geradas e verifica se o instrument_id existe
+                        quotes_ready = False
+                        quotes_contains_id = False
+                        try:
+                            start_q = time.time()
+                            # Dynamically cap preheat budget to avoid late entries
+                            preheat_budget = 5.0
+                            try:
+                                if int(expiration) == 1:
+                                    st0 = float(self.get_server_timestamp())
+                                    sec0 = st0 % 60.0
+                                    # Very tight budget at candle start to prioritize on-time entry
+                                    preheat_budget = 0.6 if sec0 <= 1.0 else 0.3
+                            except Exception:
+                                pass
+                            while time.time() - start_q < preheat_budget:
+                                try:
+                                    table = getattr(self.api.api, 'instrument_quites_generated_data', {})
+                                    period = int(expiration) * 60
+                                    data = None
+                                    if isinstance(table, dict) and asset in table and period in table[asset]:
+                                        data = table[asset][period]
+                                    if data and isinstance(data, dict) and len(data) > 0:
+                                        quotes_ready = True
+                                        if instrument_id in data:
+                                            quotes_contains_id = True
+                                            break
+                                except Exception:
+                                    pass
+                                time.sleep(0.05)
+                        except Exception:
+                            pass
+                        try:
+                            self._log_message(
+                                f"Pré-aquecimento digital | quotes_ready={quotes_ready} | has_instrument_id={quotes_contains_id}",
+                                "DEBUG"
+                            )
+                        except Exception:
+                            pass
+                        # Se o pré-aquecimento não encontrou o instrument_id esperado, fazer fallback imediato
+                        # para garantir a entrada no minuto correto (evita ficar aguardando ACK digital que não virá)
+                        if not quotes_contains_id:
+                            try:
+                                self._log_message(
+                                    "Digital sem instrument_id após pré-aquecimento — usando fallback imediato binary-options (1m)",
+                                    "WARNING"
+                                )
+                                with self._api_lock:
+                                    fb_ok, fb_id = self.api.buy(amount, asset, direction, int(expiration))
+                                if fb_ok:
+                                    self._log_message(
+                                        f"Fallback binary-options OK | order_id={fb_id} | server={self._format_server_time()}",
+                                        "INFO"
+                                    )
+                                    result_holder['success'] = True
+                                    result_holder['order_id'] = fb_id
+                                    return
+                                else:
+                                    self._log_message(
+                                        f"Fallback binary-options falhou | detalhe={fb_id}",
+                                        "ERROR"
+                                    )
+                            except Exception as fb_ex:
+                                self._log_message(f"Erro no fallback binary-options: {str(fb_ex)}", "ERROR")
+                        # Reset e envio direto (no_force_send=False evita deadlock de exclusão mútua)
+                        with self._api_lock:
+                            try:
+                                # IMPORTANT: o ACK é escrito em self.api.api.digital_option_placed_id
+                                self.api.api.digital_option_placed_id = None
+                            except Exception:
+                                pass
+                        # Enviar via API vendor oficial
+                        try:
+                            # Logar balance_id atual para diagnosticar
+                            try:
+                                bid = int(getattr(IQGV, 'balance_id', 0) or 0)
+                            except Exception:
+                                bid = 0
+                            self._log_message(f"WS place digital instrument_id={instrument_id} amount={int(amount)} balance_id={bid}", "DEBUG")
+                        except Exception:
+                            pass
+                        # Usa o canal vendor que converte amount->str internamente
+                        self.api.api.place_digital_option(instrument_id, int(amount))
+                        # Aguardar ack por até 10s (reduzir latência e alinhar entrada ao minuto)
+                        start_t = time.time()
+                        oid = None
+                        ok = False
+                        while time.time() - start_t < 10:
+                            try:
+                                # Ler o ACK do local correto (IQOptionAPI interno)
+                                oid = getattr(self.api.api, 'digital_option_placed_id', None)
+                                if isinstance(oid, int):
+                                    ok = True
+                                    break
+                                elif oid is not None:
+                                    # erro vindo do servidor
+                                    ok = False
+                                    break
+                            except Exception:
+                                pass
+                            time.sleep(0.05)
+                        # Log ack outcome
+                        try:
+                            if ok and isinstance(oid, int):
+                                self._log_message(
+                                    f"ACK digital recebido | order_id={oid} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
+                                    "DEBUG"
+                                )
+                                try:
+                                    self._order_type_by_id[str(oid)] = 'digital'
+                                    self._last_effective_option_type = 'digital'
+                                except Exception:
+                                    pass
+                            elif oid is not None:
+                                self._log_message(
+                                    f"ACK digital erro | payload={oid} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
+                                    "WARNING"
+                                )
+                            else:
+                                self._log_message(
+                                    f"ACK digital timeout (10s) sem id | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
+                                    "WARNING"
+                                )
+                        except Exception:
+                            pass
+                        # Fallback garantido: se Digital indisponível (sem quotes/id) ou ACK falhou, abre via binary-options
+                        if not ok:
+                            try:
+                                self._log_message(
+                                    "Digital indisponível/sem ACK — ativando fallback binary-options para garantir entrada (1m)",
+                                    "WARNING"
+                                )
+                                with self._api_lock:
+                                    fb_ok, fb_id = self.api.buy(amount, asset, direction, int(expiration))
+                                # Registrar outcome do fallback
+                                if fb_ok:
+                                    self._log_message(
+                                        f"Fallback binary-options OK | order_id={fb_id}",
+                                        "INFO"
+                                    )
+                                    try:
+                                        self._order_type_by_id[str(fb_id)] = 'binary'
+                                        self._last_effective_option_type = 'binary'
+                                    except Exception:
+                                        pass
+                                    ok, oid = True, fb_id
+                                else:
+                                    self._log_message(
+                                        f"Fallback binary-options falhou | detalhe={fb_id}",
+                                        "ERROR"
+                                    )
+                            except Exception as fb_ex:
+                                self._log_message(f"Erro no fallback binary-options: {str(fb_ex)}", "ERROR")
+                    else:
+                        with self._api_lock:
+                            ok, oid = self.api.buy(amount, asset, direction, expiration)
+                        try:
+                            if ok and oid is not None:
+                                self._order_type_by_id[str(oid)] = 'binary'
+                                self._last_effective_option_type = 'binary'
+                        except Exception:
+                            pass
+                    result_holder['success'] = bool(ok)
+                    result_holder['order_id'] = oid
+                except Exception as be:
+                    result_holder['error'] = str(be)
+                finally:
+                    result_holder['done'] = True
+
+            if option_type == 'digital':
+                # Executar inline para evitar timeouts artificiais de thread.join
+                _buy_worker()
+            else:
+                t = threading.Thread(target=_buy_worker, daemon=True)
+                t.start()
+                # Timeout para outros tipos
+                timeout_secs = 6
+                t.join(timeout=timeout_secs)
+
+            if not result_holder['done']:
+                self._log_message(
+                    f"Timeout ao enviar ordem para {asset}/{option_type}{' após '+str(timeout_secs)+'s' if option_type!='digital' else ''}. Considerando falha.",
+                    "ERROR"
+                )
+                # Fallback TURBO desativado por política
+                self._log_message("Fallback para TURBO desativado. Retornando falha.", "WARNING")
+                return False, None
+
+            if result_holder['error'] is not None:
+                self._log_message(f"Erro ao abrir ordem: {result_holder['error']}", "ERROR")
+                return False, None
+
+            success = result_holder['success']
+            order_id = result_holder['order_id']
+
+            # Log raw vendor response for diagnostics
+            self._log_message(
+                f"Retorno da compra | success={success} | order_id={order_id} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
+                "DEBUG"
+            )
+
             if success:
-                self._log_message(f"Ordem aberta: {asset} {direction} ${amount}", "INFO")
+                self._log_message(
+                    f"Ordem aberta: {asset} {direction} ${amount} | server={datetime.utcfromtimestamp(float(self.get_server_timestamp())).strftime('%H:%M:%S')} (sec={int(float(self.get_server_timestamp()) % 60):02d})",
+                    "INFO"
+                )
                 return True, str(order_id)
             else:
-                # When vendor returns a message object/string as order_id, log it for diagnostics
                 try:
                     extra = f" | motivo: {order_id}" if order_id is not None else ""
                 except Exception:
                     extra = ""
                 self._log_message(f"Falha ao abrir ordem: {asset} {direction} ${amount}{extra}", "ERROR")
                 return False, None
-                
+
         except Exception as e:
             self._log_message(f"Erro ao abrir ordem: {str(e)}", "ERROR")
             return False, None
@@ -979,12 +1236,38 @@ class IQOptionAPI:
             return False, None
         
         try:
+            # Use effective order type mapping when available to avoid mismatched checks
+            effective_type = None
+            try:
+                effective_type = self._order_type_by_id.get(str(order_id))
+            except Exception:
+                effective_type = None
+            chosen_type = (effective_type or option_type or 'binary').lower().strip()
+
+            # Cast order_id to int when possible (vendor methods often expect int)
+            vendor_order_id = order_id
+            try:
+                if isinstance(order_id, str) and order_id.isdigit():
+                    vendor_order_id = int(order_id)
+            except Exception:
+                vendor_order_id = order_id
+
             with self._api_lock:
-                if option_type == 'digital':
-                    status, result = self.api.check_win_digital_v2(order_id)
+                if chosen_type == 'digital':
+                    try:
+                        status, result = self.api.check_win_digital_v2(vendor_order_id)
+                    except Exception:
+                        # Fallback to binary check if digital path fails
+                        result = self.api.check_win_v3(vendor_order_id)
+                        status = True
                 else:
-                    result = self.api.check_win_v3(order_id)
-                    status = True
+                    try:
+                        result = self.api.check_win_v3(vendor_order_id)
+                        status = True
+                    except Exception:
+                        # If binary path fails unexpectedly, make a best-effort digital check
+                        status, result = self.api.check_win_digital_v2(vendor_order_id)
+
             
             if status and result is not None:
                 return True, float(result)
@@ -1006,6 +1289,19 @@ class IQOptionAPI:
         except Exception as e:
             self._log_message(f"Erro ao obter timestamp do servidor: {str(e)}", "WARNING")
             return time.time()
+    
+    def _format_server_time(self) -> str:
+        """Return server time formatted for logs (HH:MM:SS with seconds-of-minute)."""
+        try:
+            st = float(self.get_server_timestamp())
+            hhmmss = datetime.utcfromtimestamp(st).strftime('%H:%M:%S')
+            sec = int(st % 60)
+            return f"{hhmmss} (sec={sec:02d})"
+        except Exception:
+            try:
+                return datetime.utcnow().strftime('%H:%M:%S') + " (sec=??)"
+            except Exception:
+                return "unknown"
     
     def _parse_connection_error(self, reason: str) -> str:
         """Parse connection error and return user-friendly message"""

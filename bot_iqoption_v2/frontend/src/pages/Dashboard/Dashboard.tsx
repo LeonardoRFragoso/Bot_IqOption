@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Card,
-  CardContent,
   Typography,
   Alert,
 } from '@mui/material';
@@ -17,7 +15,6 @@ import type { TradingSession } from '../../types/index';
 import { useDashboard, useOperations } from '../../hooks/useApi';
 import TradingControlPanel from '../../components/TradingControlPanel/TradingControlPanel';
 import OperationsTable from '../../components/OperationsTable/OperationsTable';
-import LogsViewer from '../../components/LogsViewer/LogsViewer';
 import MarketStatus from '../../components/MarketStatus/MarketStatus';
 import StatCard from '../../components/StatCard/StatCard';
 import PerformanceChart from '../../components/Charts/PerformanceChart';
@@ -190,60 +187,21 @@ const Dashboard: React.FC = () => {
           </Box>
         </motion.div>
 
-        {/* Strategy Performance */}
-        <motion.div variants={itemVariants}>
-          <Box sx={{ mb: 3 }}>
-            <StrategyPerformanceChart 
-              data={(dashboardData as any)?.strategy_performance}
-              height={300} 
-            />
-          </Box>
-        </motion.div>
-
-        {/* Operations and Logs */}
+        {/* Operações Recentes e Performance por Estratégia (lado a lado) */}
         <motion.div variants={itemVariants}>
           <Box sx={{ 
             display: 'grid', 
             gridTemplateColumns: { xs: '1fr', lg: '2fr 1fr' },
             gap: 3 
           }}>
-            <Card sx={{ 
-              background: 'linear-gradient(135deg, #1A1A1A 0%, #2A2A2A 100%)',
-              border: '1px solid #333333',
-              borderRadius: '16px'
-            }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ 
-                  color: 'primary.main',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1
-                }}>
-                  <Assessment />
-                  Operações Recentes
-                </Typography>
-                <OperationsTable sessionId={currentSession?.id} maxRows={10} />
-              </CardContent>
-            </Card>
+            {/* OperationsTable already provides its own Card and header */}
+            <OperationsTable sessionId={currentSession?.id} maxRows={10} />
 
-            <Card sx={{ 
-              background: 'linear-gradient(135deg, #1A1A1A 0%, #2A2A2A 100%)',
-              border: '1px solid #333333',
-              borderRadius: '16px'
-            }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ 
-                  color: 'primary.main',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1
-                }}>
-                  <ShowChart />
-                  Logs do Sistema
-                </Typography>
-                <LogsViewer />
-              </CardContent>
-            </Card>
+            {/* StrategyPerformanceChart already provides its own Card and header */}
+            <StrategyPerformanceChart 
+              data={(dashboardData as any)?.strategy_performance}
+              height={300}
+            />
           </Box>
         </motion.div>
       </Box>
