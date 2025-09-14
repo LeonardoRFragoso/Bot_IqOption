@@ -104,7 +104,10 @@ def _create_mp_preference(user):
         data = r.json()
         if r.status_code in (200, 201) and data.get("id"):
             pref_id = data["id"]
-            init_point = data.get("init_point") or data.get("sandbox_init_point")
+            init_point = data.get("init_point")
+            if not init_point:
+                logger.error("[Billing] No production init_point received from Mercado Pago. Response: %s", data)
+                return None, None
             try:
                 env = "production" if (data.get("init_point") and "sandbox" not in str(data.get("init_point"))) else "sandbox"
                 logger.warning("[Billing] Mercado Pago preference created [%s]: id=%s", env.upper(), pref_id)
@@ -135,7 +138,10 @@ def _create_mp_preference(user):
                 data2 = r2.json()
                 if r2.status_code in (200, 201) and data2.get("id"):
                     pref_id = data2["id"]
-                    init_point = data2.get("init_point") or data2.get("sandbox_init_point")
+                    init_point = data2.get("init_point")
+                    if not init_point:
+                        logger.error("[Billing] No production init_point received from Mercado Pago on retry. Response: %s", data2)
+                        return None, None
                     try:
                         env = "production" if (data2.get("init_point") and "sandbox" not in str(data2.get("init_point"))) else "sandbox"
                         logger.warning("[Billing] Mercado Pago preference created on retry without auto_return [%s]: id=%s", env.upper(), pref_id)
@@ -162,7 +168,10 @@ def _create_mp_preference(user):
                         data3 = r3.json()
                         if r3.status_code in (200, 201) and data3.get("id"):
                             pref_id = data3["id"]
-                            init_point = data3.get("init_point") or data3.get("sandbox_init_point")
+                            init_point = data3.get("init_point")
+                            if not init_point:
+                                logger.error("[Billing] No production init_point received from Mercado Pago on retry 2. Response: %s", data3)
+                                return None, None
                             try:
                                 env = "production" if (data3.get("init_point") and "sandbox" not in str(data3.get("init_point"))) else "sandbox"
                                 logger.warning("[Billing] Mercado Pago preference created on retry without auto_return & notification_url [%s]: id=%s", env.upper(), pref_id)
@@ -200,7 +209,10 @@ def _create_mp_preference(user):
                 data3 = r3.json()
                 if r3.status_code in (200, 201) and data3.get("id"):
                     pref_id = data3["id"]
-                    init_point = data3.get("init_point") or data3.get("sandbox_init_point")
+                    init_point = data3.get("init_point")
+                    if not init_point:
+                        logger.error("[Billing] No production init_point received from Mercado Pago on retry 3. Response: %s", data3)
+                        return None, None
                     logger.info("Mercado Pago preference created on retry without notification_url and auto_return")
                     return pref_id, init_point
                 logger.error("Failed to create Mercado Pago preference (retry without notification_url): %s", data3)
@@ -225,7 +237,10 @@ def _create_mp_preference(user):
             data4 = r4.json()
             if r4.status_code in (200, 201) and data4.get("id"):
                 pref_id = data4["id"]
-                init_point = data4.get("init_point") or data4.get("sandbox_init_point")
+                init_point = data4.get("init_point")
+                if not init_point:
+                    logger.error("[Billing] No production init_point received from Mercado Pago on minimal fallback. Response: %s", data4)
+                    return None, None
                 try:
                     env = "production" if (data4.get("init_point") and "sandbox" not in str(data4.get("init_point"))) else "sandbox"
                     logger.warning("[Billing] Mercado Pago preference created using minimal payload fallback [%s]: id=%s", env.upper(), pref_id)

@@ -3,6 +3,7 @@ import { Box, Card, CardContent, Typography, Button, Alert, CircularProgress } f
 import { useNavigate, useLocation } from 'react-router-dom';
 import apiService from '../../services/api';
 import type { SubscriptionStatus } from '../../types/index';
+import { useAuth } from '../../contexts/AuthContext';
 
 const MP_SCRIPT_SRC = 'https://www.mercadopago.com.br/integrations/v1/web-payment-checkout.js';
 
@@ -13,6 +14,7 @@ const Pay: React.FC = () => {
   const [verifyMsg, setVerifyMsg] = useState<string>('');
   const navigate = useNavigate();
   const location = useLocation();
+  const { refreshSubscriptionStatus } = useAuth();
 
   const preferenceId = status?.preference_id;
   const initPoint = status?.init_point;
@@ -22,6 +24,8 @@ const Pay: React.FC = () => {
       setLoading(true);
       const s = await apiService.getSubscriptionStatus();
       setStatus(s);
+      // Update auth context subscription status
+      await refreshSubscriptionStatus();
       if (s.is_subscribed) {
         navigate('/dashboard');
       }
@@ -58,11 +62,12 @@ const Pay: React.FC = () => {
     setVerifyMsg('Verificando pagamento...');
     apiService
       .verifyPaymentReturn(payload)
-      .then((res) => {
+      .then(async (res) => {
         if (res.success) {
           if (res.activated) {
             setVerifyMsg('Pagamento aprovado! Assinatura ativada. Redirecionando...');
-            // Refresh status and go to dashboard
+            // Refresh status and auth context, then go to dashboard
+            await refreshSubscriptionStatus();
             void loadStatus();
             setTimeout(() => navigate('/dashboard'), 1200);
           } else {
@@ -164,10 +169,11 @@ const Pay: React.FC = () => {
                   setVerifyMsg('Verificando pagamento atual...');
                   apiService
                     .verifyPaymentReturn({ preference_id: preferenceId })
-                    .then((res) => {
+                    .then(async (res) => {
                       if (res.success) {
                         if (res.activated) {
                           setVerifyMsg('Pagamento aprovado! Assinatura ativada. Redirecionando...');
+                          await refreshSubscriptionStatus();
                           void loadStatus();
                           setTimeout(() => navigate('/dashboard'), 1200);
                         } else {
