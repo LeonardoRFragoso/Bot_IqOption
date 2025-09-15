@@ -473,7 +473,30 @@ class BaseStrategy:
                 option_type=actual_operation_type,
                 urgent=bool(gale_level > 0 and int(expiration) == 1)
             )
-            
+
+            # If Binary was chosen and failed, try immediate Digital fallback (non-OTC often has binary suspended)
+            if (not success) and actual_operation_type == 'binary':
+                try:
+                    self._log("Binary falhou - tentando fallback DIGITAL", "WARNING")
+                except Exception:
+                    pass
+                fb_success, fb_order_id = self.api.buy_option(
+                    asset=asset,
+                    amount=entry_value,
+                    direction=direction,
+                    expiration=expiration,
+                    option_type='digital',
+                    urgent=True
+                )
+                if fb_success:
+                    success = True
+                    order_id = fb_order_id
+                    actual_operation_type = 'digital'
+                    try:
+                        self._log(f"Fallback DIGITAL retornou sucesso | order_id={order_id}", "INFO")
+                    except Exception:
+                        pass
+
             # Diagnostic: log immediate result from API
             if success:
                 self._log(f"buy_option retornou sucesso | order_id={order_id}", "INFO")
@@ -713,7 +736,8 @@ class MHIStrategy(BaseStrategy):
                         pending_target_idx = minute_idx + 1
                         # Pré-aquecer DIGITAL: assinar strike list com antecedência quando planejamos entrar na próxima vela
                         try:
-                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                            # Sempre pré-aquecer DIGITAL, mesmo quando a operação preferida é BINARY
+                            if hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
                                 with self.api._api_lock:
                                     self.api.subscribe_strike_list(asset, 1)
                         except Exception:
@@ -1135,7 +1159,8 @@ class MHIM5Strategy(BaseStrategy):
                         pending_target_idx = minute_idx + 1
                         # Pré-aquecer DIGITAL: assinar strike list com antecedência quando planejamos entrar na próxima vela
                         try:
-                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                            # Sempre pré-aquecer DIGITAL, mesmo quando a operação preferida é BINARY
+                            if hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
                                 with self.api._api_lock:
                                     self.api.subscribe_strike_list(asset, 5)  # 5-minute expiration
                                     # Aguardar um pouco para o sistema se preparar
@@ -1164,7 +1189,7 @@ class MHIM5Strategy(BaseStrategy):
                     if direction in ['put', 'call']:
                         # Pré-aquecer DIGITAL imediatamente antes da entrada
                         try:
-                            if operation_type == 'digital' and hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
+                            if hasattr(self.api, '_api_lock') and getattr(self.api, 'subscribe_strike_list', None):
                                 with self.api._api_lock:
                                     self.api.subscribe_strike_list(asset, 5)
                         except Exception:

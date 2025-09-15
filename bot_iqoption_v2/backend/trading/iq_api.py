@@ -734,9 +734,12 @@ class IQOptionAPI:
             result = {'binary': 0, 'turbo': 0, 'digital': 0}
             
             # Verificar se os dados estão disponíveis
-            if not profit or not all_assets:
-                self._log_message(f"Dados de profit ou assets não disponíveis para {asset}", "WARNING")
+            if not profit:
+                self._log_message(f"Dados de profit não disponíveis para {asset}", "WARNING")
                 return result
+            # Tratar open_time como opcional (pode estar indisponível/transiente)
+            if not all_assets or not isinstance(all_assets, dict):
+                all_assets = {}
             
             # Prepare candidate asset keys for profit lookup
             candidates = []
@@ -871,11 +874,15 @@ class IQOptionAPI:
                     elif 'active' in asset_data:
                         is_open = bool(asset_data.get('active'))
 
-                if (profit_data and isinstance(profit_data, (int, float)) and profit_data > 0 
-                    and (is_open is not False)):
-                    # If we don't explicitly know it's closed, honor the profit value
+                if (profit_data and isinstance(profit_data, (int, float)) and profit_data > 0):
+                    # Honor profit value regardless of open_time flag (market detection can be unreliable)
                     result['binary'] = round(profit_data * 100, 2)
-                    self._log_message(f"[PAYOUT-BINARY] {asset}: {result['binary']}% (raw: {profit_data}, open: {is_open})", "DEBUG")
+                    self._log_message(f"[PAYOUT-BINARY] {asset}: {result['binary']}% (raw: {profit_data}, open_time={is_open})", "DEBUG")
+                    if is_open is False:
+                        self._log_message(
+                            f"[PAYOUT-NOTE] open_time indica fechado para {asset}, mas lucro está disponível. Usando payout mesmo assim.",
+                            "DEBUG"
+                        )
                     
             except Exception as e:
                 self._log_message(f"Erro ao obter payout binary para {asset}: {str(e)}", "DEBUG")
@@ -902,6 +909,39 @@ class IQOptionAPI:
                     if heuristic > 0:
                         result['digital'] = heuristic
                         self._log_message(f"[PAYOUT-DIGITAL] {asset}: {result['digital']}% (heurística baseada em binary)", "DEBUG")
+
+                # FAST-PATH: Se ainda não temos payout digital (>0), tentar via quotes digitais SPT (pré-aquecimento curto)
+                if (result.get('digital', 0) or 0) <= 0:
+                    try:
+                        # Pré-aquecer rapidamente a lista de strikes digitais para 1 minuto
+                        try:
+                            self.subscribe_strike_list(asset, 1)
+                        except Exception:
+                            pass
+                        start_q = time.time()
+                        val = None
+                        # Janela curta para não bloquear (até ~0.4s)
+                        while time.time() - start_q < 0.4:
+                            try:
+                                if hasattr(self.api, 'get_digital_current_profit') and callable(getattr(self.api, 'get_digital_current_profit', None)):
+                                    v = self.api.get_digital_current_profit(asset, 1)
+                                    if isinstance(v, (int, float)) and v:
+                                        val = float(v)
+                                        break
+                            except Exception:
+                                pass
+                            time.sleep(0.05)
+                        if val is not None:
+                            # Normalizar valor retornado (algumas variantes retornam fração 0-1, outras percentuais)
+                            pct = val
+                            if pct <= 1.5:
+                                pct = pct * 100.0
+                            # Sanitizar para faixa plausível
+                            if 40.0 <= pct <= 100.0:
+                                result['digital'] = round(pct, 2)
+                                self._log_message(f"[PAYOUT-DIGITAL] {asset}: {result['digital']}% (via quotes SPT)", "DEBUG")
+                    except Exception:
+                        pass
             except Exception as payout_e:
                 # Manter silêncio em DEBUG para evitar ruído
                 self._log_message(f"Payout digital não disponível para {asset} (usando heurística). Detalhe: {str(payout_e)}", "DEBUG")
@@ -1198,7 +1238,9 @@ class IQOptionAPI:
                                 "DEBUG"
                             )
                             with self._api_lock:
-                                digital_ok, digital_id = self.api.buy_digital_spot(instrument_id, amount)
+                                # Use vendor API to build digital instrument internally and place order
+                                # Signature: buy_digital_spot(active, amount, action, duration)
+                                digital_ok, digital_id = self.api.buy_digital_spot(asset, amount, direction, int(expiration))
                             
                             if digital_ok:
                                 self._log_message(
@@ -1259,6 +1301,29 @@ class IQOptionAPI:
                                     f"Ordem binary falhou | detalhe={binary_id}",
                                     "ERROR"
                                 )
+                                # Immediate DIGITAL fallback when binary fails (common on non-OTC suspended)
+                                try:
+                                    self._log_message("Binary falhou - tentando fallback DIGITAL", "WARNING")
+                                    with self._api_lock:
+                                        dg_ok, dg_id = self.api.buy_digital_spot(asset, amount, direction, int(expiration))
+                                    if dg_ok:
+                                        self._log_message(
+                                            f"Fallback DIGITAL OK | order_id={dg_id} | server={self._format_server_time()}",
+                                            "INFO"
+                                        )
+                                        try:
+                                            self._last_effective_option_type = 'digital'
+                                            self._order_type_by_id[str(dg_id)] = 'digital'
+                                        except Exception:
+                                            pass
+                                        result_holder['success'] = True
+                                        result_holder['order_id'] = dg_id
+                                        result_holder['effective_type'] = 'digital'
+                                        result_holder['done'] = True
+                                        return
+                                except Exception as fb_ex:
+                                    self._log_message(f"Erro no fallback DIGITAL: {str(fb_ex)}", "ERROR")
+                                # Fallback failed or not available: finalize as failure
                                 result_holder['success'] = False
                                 result_holder['order_id'] = binary_id
                                 result_holder['done'] = True
