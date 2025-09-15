@@ -993,16 +993,93 @@ class IQ_Option:
 
         self.api.place_digital_option(instrument_id, amount)
         start_t = time.time()
-        # Wait up to 15s for provider to acknowledge placement to avoid infinite block
-        while self.api.digital_option_placed_id is None and time.time() - start_t < 15:
-            time.sleep(0.05)
+        # Wait up to 12s for provider to acknowledge placement to avoid infinite block
+        while self.api.digital_option_placed_id is None and time.time() - start_t < 12:
+             time.sleep(0.05)
         if self.api.digital_option_placed_id is None:
-            logging.error('buy_digital_spot timeout waiting for digital_option_placed_id')
+            logging.debug('buy_digital_spot timeout waiting for digital_option_placed_id')
             return False, None
         if isinstance(self.api.digital_option_placed_id, int):
             return True, self.api.digital_option_placed_id
         else:
             return False, self.api.digital_option_placed_id
+
+    def buy_digital_spot_v2(self, active, amount, action, duration):
+        """Improved digital spot buy with fallback via portfolio position-changed."""
+        # Normalize action
+        if action == 'put':
+            action_letter = 'P'
+        elif action == 'call':
+            action_letter = 'C'
+        else:
+            logging.error('buy_digital_spot_v2 active error')
+            return False, None
+
+        # Compute expiration (GMT) exactly as original implementation
+        timestamp = int(self.api.timesync.server_timestamp)
+        if duration == 1:
+            exp, _ = get_expiration_time(timestamp, duration)
+        else:
+            now_date = datetime.fromtimestamp(timestamp) + timedelta(minutes=1, seconds=30)
+            while True:
+                if now_date.minute % duration == 0 and time.mktime(now_date.timetuple()) - timestamp > 30:
+                    break
+                now_date = now_date + timedelta(minutes=1)
+            exp = time.mktime(now_date.timetuple())
+
+        date_formatted = str(datetime.utcfromtimestamp(exp).strftime("%Y%m%d%H%M"))
+        instrument_id = "do" + active + date_formatted + "PT" + str(duration) + "M" + action_letter + "SPT"
+
+        # Best-effort subscribe strike list to help backend generate quotes; do not block
+        try:
+            self.api.subscribe_instrument_quites_generated(active, duration)
+        except Exception:
+            pass
+
+        # Reset ack holder and place order
+        self.api.digital_option_placed_id = None
+        self.api.place_digital_option(instrument_id, amount)
+
+        start_t = time.time()
+        candidate_id = None
+        while time.time() - start_t < 12:
+            # Primary success path
+            if isinstance(self.api.digital_option_placed_id, int):
+                return True, self.api.digital_option_placed_id
+
+            # Fallback: detect order id via portfolio 'position-changed'
+            try:
+                oa = getattr(self.api, 'order_async', {})
+                if isinstance(oa, dict) and oa:
+                    for k in list(oa.keys())[::-1]:  # newest first (heuristic)
+                        try:
+                            pc = oa.get(k, {}).get('position-changed')
+                            if not pc or not isinstance(pc, dict):
+                                continue
+                            msg = pc.get('msg') or {}
+                            raw = msg.get('raw_event') or {}
+                            # Check underlying when available
+                            und = raw.get('instrument_underlying') or raw.get('instrument_underlying_id')
+                            if isinstance(und, str) and und.upper() != active.upper():
+                                continue
+                            # Check buy amount if present
+                            ba = raw.get('buy_amount')
+                            try:
+                                if ba is not None and abs(float(ba) - float(amount)) > 0.01:
+                                    continue
+                            except Exception:
+                                pass
+                            candidate_id = int(k)
+                            return True, candidate_id
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+            time.sleep(0.05)
+
+        logging.debug('buy_digital_spot_v2 timeout waiting for digital_option_placed_id')
+        return False, None
 
     def get_digital_spot_profit_after_sale(self, position_id):
         def get_instrument_id_to_bid(data, instrument_id):

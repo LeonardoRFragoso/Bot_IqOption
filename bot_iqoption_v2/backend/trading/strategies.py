@@ -486,7 +486,7 @@ class BaseStrategy:
                     direction=direction,
                     expiration=expiration,
                     option_type='digital',
-                    urgent=True
+                    urgent=False
                 )
                 if fb_success:
                     success = True
@@ -791,8 +791,8 @@ class MHIStrategy(BaseStrategy):
             self._log("Erro ao obter velas para análise", "ERROR")
             return None
         
-        # Validate that returned candles are M1 (60 seconds timeframe)
         try:
+            # Validate that returned candles are M1 (60 seconds timeframe)
             if len(candles) >= 3:
                 step1 = int(candles[-1]['from']) - int(candles[-2]['from'])
                 step2 = int(candles[-2]['from']) - int(candles[-3]['from'])

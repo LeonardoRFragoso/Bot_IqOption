@@ -92,7 +92,7 @@ class User(AbstractUser):
             ('PRACTICE', 'Demo'),
             ('REAL', 'Real')
         ],
-        default='PRACTICE',
+        default='REAL',
         help_text="Tipo de conta preferido para trading"
     )
     

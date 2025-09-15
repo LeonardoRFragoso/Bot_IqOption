@@ -159,7 +159,7 @@ class StartTradingSerializer(serializers.Serializer):
     asset = serializers.CharField(max_length=20)
     account_type = serializers.ChoiceField(
         choices=[('PRACTICE', 'Demo'), ('REAL', 'Real')],
-        default='PRACTICE'
+        default='REAL'
     )
     
     def validate_asset(self, value):
@@ -179,7 +179,7 @@ class CatalogAssetsSerializer(serializers.Serializer):
     
     account_type = serializers.ChoiceField(
         choices=[('PRACTICE', 'Demo'), ('REAL', 'Real')],
-        default='PRACTICE'
+        default='REAL'
     )
     
     strategies = serializers.MultipleChoiceField(

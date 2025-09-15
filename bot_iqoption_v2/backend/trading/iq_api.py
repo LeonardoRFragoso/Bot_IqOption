@@ -516,7 +516,7 @@ class IQOptionAPI:
                         continue
                         
             except Exception as e:
-                self._log_message(f"Erro no método 3 para {market_type}: {str(e)}", "DEBUG")
+                self._log_message(f"Erro geral ao extrair ativos de {market_type}: {str(e)}", "DEBUG")
                             
         except Exception as e:
             self._log_message(f"Erro geral ao extrair ativos de {market_type}: {str(e)}", "DEBUG")
@@ -839,6 +839,7 @@ class IQOptionAPI:
                                         break
                         except (KeyError, TypeError, AttributeError):
                             continue
+                
                     # Tentar via active_id quando as chaves são inteiras
                     if not profit_data and candidate_ids:
                         for act_id in candidate_ids:
@@ -910,38 +911,43 @@ class IQOptionAPI:
                         result['digital'] = heuristic
                         self._log_message(f"[PAYOUT-DIGITAL] {asset}: {result['digital']}% (heurística baseada em binary)", "DEBUG")
 
-                # FAST-PATH: Se ainda não temos payout digital (>0), tentar via quotes digitais SPT (pré-aquecimento curto)
-                if (result.get('digital', 0) or 0) <= 0:
+                # FAST-PATH: Tentar via quotes digitais SPT (pré-aquecimento curto) SEMPRE que possível
+                # Mesmo quando já temos heurística baseada no binary, se as quotes trouxerem um valor plausível,
+                # fazemos override para refletir o payout da plataforma (ex.: 85%).
+                try:
+                    # Pré-aquecer rapidamente a lista de strikes digitais para 1 minuto
                     try:
-                        # Pré-aquecer rapidamente a lista de strikes digitais para 1 minuto
-                        try:
-                            self.subscribe_strike_list(asset, 1)
-                        except Exception:
-                            pass
-                        start_q = time.time()
-                        val = None
-                        # Janela curta para não bloquear (até ~0.4s)
-                        while time.time() - start_q < 0.4:
-                            try:
-                                if hasattr(self.api, 'get_digital_current_profit') and callable(getattr(self.api, 'get_digital_current_profit', None)):
-                                    v = self.api.get_digital_current_profit(asset, 1)
-                                    if isinstance(v, (int, float)) and v:
-                                        val = float(v)
-                                        break
-                            except Exception:
-                                pass
-                            time.sleep(0.05)
-                        if val is not None:
-                            # Normalizar valor retornado (algumas variantes retornam fração 0-1, outras percentuais)
-                            pct = val
-                            if pct <= 1.5:
-                                pct = pct * 100.0
-                            # Sanitizar para faixa plausível
-                            if 40.0 <= pct <= 100.0:
-                                result['digital'] = round(pct, 2)
-                                self._log_message(f"[PAYOUT-DIGITAL] {asset}: {result['digital']}% (via quotes SPT)", "DEBUG")
+                        self.subscribe_strike_list(asset, int(expiration))
                     except Exception:
                         pass
+                    start_q = time.time()
+                    val = None
+                    # Janela curta para não bloquear (até ~0.7s)
+                    while time.time() - start_q < 0.7:
+                        try:
+                            if hasattr(self.api, 'get_digital_current_profit') and callable(getattr(self.api, 'get_digital_current_profit', None)):
+                                v = self.api.get_digital_current_profit(asset, int(expiration))
+                                if isinstance(v, (int, float)) and v:
+                                    val = float(v)
+                                    break
+                        except Exception:
+                            pass
+                        time.sleep(0.05)
+                    if val is not None:
+                        # Normalizar valor retornado (algumas variantes retornam fração 0-1, outras percentuais)
+                        pct = val
+                        if pct <= 1.5:
+                            pct = pct * 100.0
+                        # Sanitizar para faixa plausível
+                        if 40.0 <= pct <= 100.0:
+                            prev = float(result.get('digital', 0) or 0)
+                            new_pct = round(pct, 2)
+                            # Override se quotes trouxerem valor maior ou se ainda estava 0
+                            if new_pct != prev and (prev <= 0 or new_pct > prev - 0.1):
+                                result['digital'] = new_pct
+                                self._log_message(f"[PAYOUT-DIGITAL-OVERRIDE] {asset}: {result['digital']}% (via quotes SPT)", "DEBUG")
+                except Exception:
+                    pass
             except Exception as payout_e:
                 # Manter silêncio em DEBUG para evitar ruído
                 self._log_message(f"Payout digital não disponível para {asset} (usando heurística). Detalhe: {str(payout_e)}", "DEBUG")
@@ -1044,12 +1050,9 @@ class IQOptionAPI:
                 try:
                     payouts = self.get_payout(asset)
                     if payouts.get('digital', 0) <= 0:
-                        self._log_message(f"Digital fechado para {asset}, impedindo compra", "WARNING")
+                        self._log_message(f"Digital sem payout para {asset} — impedindo compra", "WARNING")
                         return False, None
-                    # Verify open state as well
-                    if hasattr(self, 'is_asset_open') and not self.is_asset_open(asset, 'digital'):
-                        self._log_message(f"Digital não está aberto para {asset} segundo open_time", "WARNING")
-                        return False, None
+                    # open_time check desativado para DIGITAL (vendor é inconsistente). Confiar apenas em payout>0.
                 except Exception:
                     pass
             elif option_type == 'digital' and fast_path:
@@ -1103,35 +1106,35 @@ class IQOptionAPI:
                             exp = time.mktime(now_date.timetuple())
                         date_formatted = datetime.utcfromtimestamp(exp).strftime("%Y%m%d%H%M")
                         instrument_id = f"do{asset}{date_formatted}PT{int(expiration)}M{action}SPT"
-                        # Pré-aquecimento: assinar lista de strikes (wrapper com lock interno)
+                        # Pré-aquecimento: assinar lista de strikes digitais para 1 minuto
                         try:
                             self.subscribe_strike_list(asset, int(expiration))
                         except Exception:
                             pass
-                        # Espera ativa curta pelas cotações digitais geradas e verifica se o instrument_id existe
+                        # FAST PATH: não aguardar pré-aquecimento; enviar imediatamente no gate
                         quotes_ready = False
                         quotes_contains_id = False
-                        try:
-                            start_q = time.time()
-                            # Janela de pré-aquecimento ultracurta para entradas M1 on-time
-                            preheat_budget = 0.25 if int(expiration) == 1 else 0.3
-                            while time.time() - start_q < preheat_budget:
-                                try:
-                                    table = getattr(self.api.api, 'instrument_quites_generated_data', {})
-                                    period = int(expiration) * 60
-                                    data = None
-                                    if isinstance(table, dict) and asset in table and period in table[asset]:
-                                        data = table[asset][period]
-                                    if data and isinstance(data, dict) and len(data) > 0:
-                                        quotes_ready = True
-                                        if instrument_id in data:
-                                            quotes_contains_id = True
-                                            break
-                                except Exception:
-                                    pass
-                                time.sleep(0.05)
-                        except Exception:
-                            pass
+                        if not fast_path:
+                            try:
+                                start_q = time.time()
+                                # Janela curta para não bloquear (até ~0.7s)
+                                while time.time() - start_q < 0.7:
+                                    try:
+                                        table = getattr(self.api.api, 'instrument_quites_generated_data', {})
+                                        period = int(expiration) * 60
+                                        data = None
+                                        if isinstance(table, dict) and asset in table and period in table[asset]:
+                                            data = table[asset][period]
+                                        if data and isinstance(data, dict) and len(data) > 0:
+                                            quotes_ready = True
+                                            if instrument_id in data:
+                                                quotes_contains_id = True
+                                                break
+                                    except Exception:
+                                        pass
+                                    time.sleep(0.05)
+                            except Exception:
+                                pass
                         try:
                             self._log_message(
                                 f"Pré-aquecimento digital | quotes_ready={quotes_ready} | has_instrument_id={quotes_contains_id}",
@@ -1152,7 +1155,7 @@ class IQOptionAPI:
                             except Exception:
                                 bin_payout = 0
                             try:
-                                fallback_allowed = (not binary_suspended_local) and (urgent or bin_payout > 0)
+                                fallback_allowed = False  # Do not attempt binary fallback from digital path; strategy handles Binary->Digital
                                 if fallback_allowed:
                                     # Garantir mapeamento ACTIVES antes de tentar comprar em binary
                                     try:
@@ -1212,11 +1215,11 @@ class IQOptionAPI:
                                     )
                             except Exception as fb_ex:
                                 self._log_message(f"Erro no fallback binary-options: {str(fb_ex)}", "ERROR")
-                            # Sem instrument_id e sem fallback viável -> abortar rapidamente
+                            # Sem instrument_id e sem fallback viável -> não abortar; prosseguir com envio digital direto
                             try:
-                                cond_no_binary = (not ((not binary_suspended_local) and (urgent or bin_payout > 0))) or binary_suspended_local
+                                cond_no_binary = False  # Never abort here due to missing instrument_id
                             except Exception:
-                                cond_no_binary = True
+                                cond_no_binary = False
                             if cond_no_binary:
                                 try:
                                     self._log_message(
@@ -1229,50 +1232,90 @@ class IQOptionAPI:
                                 result_holder['order_id'] = None
                                 result_holder['done'] = True
                                 return
-                            # Se cond_no_binary for falso mas mesmo assim não concluímos (situação improvável), prosseguimos para envio digital
-
-                        # Tentativa de envio digital mesmo sem instrument_id no cache de quotes
-                        try:
-                            self._log_message(
-                                f"Tentando envio digital direto | instrument_id={instrument_id}",
-                                "DEBUG"
-                            )
-                            with self._api_lock:
-                                # Use vendor API to build digital instrument internally and place order
-                                # Signature: buy_digital_spot(active, amount, action, duration)
-                                digital_ok, digital_id = self.api.buy_digital_spot(asset, amount, direction, int(expiration))
+                            # Se cond_no_binary for falso, prosseguimos para envio digital direto
                             
-                            if digital_ok:
+                            # Tentativa de envio digital mesmo sem instrument_id no cache de quotes
+                            try:
                                 self._log_message(
-                                    f"Ordem digital OK | order_id={digital_id} | server={self._format_server_time()}",
-                                    "INFO"
+                                    f"Tentando envio digital direto | instrument_id={instrument_id}",
+                                    "DEBUG"
                                 )
-                                # Register effective order type mapping for this order
-                                try:
-                                    self._last_effective_option_type = 'digital'
-                                    self._order_type_by_id[str(digital_id)] = 'digital'
-                                except Exception:
-                                    pass
-                                result_holder['success'] = True
-                                result_holder['order_id'] = digital_id
-                                result_holder['effective_type'] = 'digital'
-                                result_holder['done'] = True
-                                return
-                            else:
-                                self._log_message(
-                                    f"Ordem digital falhou | detalhe={digital_id}",
-                                    "ERROR"
-                                )
+                                with self._api_lock:
+                                    # Use vendor API to build digital instrument internally and place order
+                                    # Signature: buy_digital_spot(active, amount, action, duration)
+                                    if hasattr(self.api, 'buy_digital_spot_v2') and callable(getattr(self.api, 'buy_digital_spot_v2', None)):
+                                        try:
+                                            self._log_message("Digital path: usando buy_digital_spot_v2", "DEBUG")
+                                        except Exception:
+                                            pass
+                                        digital_ok, digital_id = self.api.buy_digital_spot_v2(asset, amount, direction, int(expiration))
+                                    else:
+                                        try:
+                                            self._log_message("Digital path: usando buy_digital_spot (legacy)", "DEBUG")
+                                        except Exception:
+                                            pass
+                                        # Legacy path
+                                        digital_ok, digital_id = self.api.buy_digital_spot(asset, amount, direction, int(expiration))
+                                
+                                if digital_ok:
+                                    self._log_message(
+                                        f"Ordem digital OK | order_id={digital_id} | server={self._format_server_time()}",
+                                        "INFO"
+                                    )
+                                    # Register effective order type mapping for this order
+                                    try:
+                                        self._last_effective_option_type = 'digital'
+                                        self._order_type_by_id[str(digital_id)] = 'digital'
+                                    except Exception:
+                                        pass
+                                    result_holder['success'] = True
+                                    result_holder['order_id'] = digital_id
+                                    result_holder['effective_type'] = 'digital'
+                                    result_holder['done'] = True
+                                    return
+                                else:
+                                    # Resilient fallback: if v2 failed (or returned None), try legacy method once
+                                    try:
+                                        can_try_legacy = hasattr(self.api, 'buy_digital_spot') and callable(getattr(self.api, 'buy_digital_spot', None))
+                                        used_v2 = hasattr(self.api, 'buy_digital_spot_v2') and callable(getattr(self.api, 'buy_digital_spot_v2', None))
+                                        if can_try_legacy and used_v2:
+                                            try:
+                                                self._log_message("Digital path fallback: tentando buy_digital_spot (legacy)", "WARNING")
+                                            except Exception:
+                                                pass
+                                            with self._api_lock:
+                                                legacy_ok, legacy_id = self.api.buy_digital_spot(asset, amount, direction, int(expiration))
+                                            if legacy_ok:
+                                                self._log_message(
+                                                    f"Ordem digital (fallback legacy) OK | order_id={legacy_id} | server={self._format_server_time()}",
+                                                    "INFO"
+                                                )
+                                                try:
+                                                    self._last_effective_option_type = 'digital'
+                                                    self._order_type_by_id[str(legacy_id)] = 'digital'
+                                                except Exception:
+                                                    pass
+                                                result_holder['success'] = True
+                                                result_holder['order_id'] = legacy_id
+                                                result_holder['effective_type'] = 'digital'
+                                                result_holder['done'] = True
+                                                return
+                                    except Exception:
+                                        pass
+                                    self._log_message(
+                                        f"Ordem digital falhou | detalhe={digital_id}",
+                                        "ERROR"
+                                    )
+                                    result_holder['success'] = False
+                                    result_holder['order_id'] = digital_id
+                                    result_holder['done'] = True
+                                    return
+                            except Exception as digital_ex:
+                                self._log_message(f"Erro no envio digital: {str(digital_ex)}", "ERROR")
                                 result_holder['success'] = False
-                                result_holder['order_id'] = digital_id
+                                result_holder['order_id'] = None
                                 result_holder['done'] = True
                                 return
-                        except Exception as digital_ex:
-                            self._log_message(f"Erro no envio digital: {str(digital_ex)}", "ERROR")
-                            result_holder['success'] = False
-                            result_holder['order_id'] = None
-                            result_holder['done'] = True
-                            return
 
                     else:
                         # Binary options path for non-digital orders
@@ -1301,29 +1344,8 @@ class IQOptionAPI:
                                     f"Ordem binary falhou | detalhe={binary_id}",
                                     "ERROR"
                                 )
-                                # Immediate DIGITAL fallback when binary fails (common on non-OTC suspended)
-                                try:
-                                    self._log_message("Binary falhou - tentando fallback DIGITAL", "WARNING")
-                                    with self._api_lock:
-                                        dg_ok, dg_id = self.api.buy_digital_spot(asset, amount, direction, int(expiration))
-                                    if dg_ok:
-                                        self._log_message(
-                                            f"Fallback DIGITAL OK | order_id={dg_id} | server={self._format_server_time()}",
-                                            "INFO"
-                                        )
-                                        try:
-                                            self._last_effective_option_type = 'digital'
-                                            self._order_type_by_id[str(dg_id)] = 'digital'
-                                        except Exception:
-                                            pass
-                                        result_holder['success'] = True
-                                        result_holder['order_id'] = dg_id
-                                        result_holder['effective_type'] = 'digital'
-                                        result_holder['done'] = True
-                                        return
-                                except Exception as fb_ex:
-                                    self._log_message(f"Erro no fallback DIGITAL: {str(fb_ex)}", "ERROR")
-                                # Fallback failed or not available: finalize as failure
+                                # Não fazer fallback DIGITAL aqui; a estratégia é responsável por Binary->Digital
+                                self._log_message("Binary falhou - sem fallback interno; estratégia fará DIGITAL", "WARNING")
                                 result_holder['success'] = False
                                 result_holder['order_id'] = binary_id
                                 result_holder['done'] = True
@@ -1342,15 +1364,15 @@ class IQOptionAPI:
                     if not result_holder.get('done'):
                         result_holder['done'] = True
 
-            if option_type == 'digital':
+            if option_type == 'digital' and fast_path:
                 # Executar inline para evitar timeouts artificiais de thread.join
                 _buy_worker()
             else:
                 t = threading.Thread(target=_buy_worker, daemon=True)
                 t.start()
-                # Timeout para outros tipos
-                timeout_secs = 6
-                t.join(timeout=timeout_secs)
+                # Timeout para outros tipos e também para digital quando não for FAST PATH
+                timeout_secs = 12 if option_type == 'digital' else 6
+                t.join(timeout_secs)
 
             if not result_holder['done']:
                 self._log_message(
