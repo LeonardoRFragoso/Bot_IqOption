@@ -41,10 +41,11 @@ class BaseStrategy:
         # Log filtros ativos para visibilidade
         if hasattr(self.config, 'filtros_ativos'):
             filtros = getattr(self.config, 'filtros_ativos', [])
-            if filtros:
+            # Verificar se filtros é uma lista válida e não vazia
+            if isinstance(filtros, list) and len(filtros) > 0:
                 self._log(f"[FILTROS] Ativos: {filtros}", "INFO")
                 
-                # Log parâmetros específicos dos filtros
+                # Log parâmetros específicos dos filtros apenas se há filtros ativos
                 if hasattr(self.config, 'media_movel_threshold'):
                     self._log(f"[FILTROS] Media Movel: {self.config.media_movel_threshold}", "INFO")
                 if hasattr(self.config, 'rodrigo_risco_threshold'):
@@ -214,6 +215,69 @@ class BaseStrategy:
         return False
 
     # ------------------ Execution helpers ------------------
+    def _determine_operation_type(self, asset: str) -> Tuple[Optional[str], Optional[str]]:
+        """Determine best operation type and asset based on payouts"""
+        # Check if current asset is available
+        payouts = self.api.get_payout(asset, force_refresh=True)
+        self._log(f"[DEBUG] Payouts para {asset}: {payouts}", "DEBUG")
+        
+        # Remover TURBO da consideração
+        if payouts['digital'] == 0 and payouts['binary'] == 0:
+            # Try to find alternative asset
+            alternative_asset = self.api.get_best_available_asset()
+            if alternative_asset:
+                self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
+                asset = alternative_asset
+                payouts = self.api.get_payout(asset, force_refresh=True)
+            else:
+                self._log("Nenhum ativo disponível no momento", "ERROR")
+                return None, None
+        
+        # Mapear configuração manual 'turbo' para 'digital'
+        tipo = getattr(self.config, 'tipo', 'digital')
+        if str(tipo).lower() == 'turbo':
+            self._log("Operações TURBO desativadas. Usando DIGITAL.", "WARNING")
+            tipo = 'digital'
+        
+        # Operação automática: somente DIGITAL ou BINARY (sem TURBO)
+        if tipo == 'automatico':
+            digital = payouts.get('digital', 0) or 0
+            binary = payouts.get('binary', 0) or 0
+            
+            # Prioritize binary first, digital as fallback
+            if binary > 0:
+                self._log(f"Operações serão realizadas nas BINARY (payout: {binary}%)", "INFO")
+                return 'binary', asset
+            if digital > 0:
+                self._log(f"BINARY indisponível - usando DIGITAL como fallback (payout: {digital}%)", "INFO")
+                return 'digital', asset
+            
+            # Se nenhum payout disponível, tentar ativo alternativo
+            alternative_asset = self.api.get_best_available_asset()
+            if alternative_asset and alternative_asset != asset:
+                self._log(f"Ativo {asset} fechado, tentando {alternative_asset}", "WARNING")
+                alt_payouts = self.api.get_payout(alternative_asset, force_refresh=True)
+                alt_binary = alt_payouts.get('binary', 0) or 0
+                alt_digital = alt_payouts.get('digital', 0) or 0
+                
+                if alt_binary > 0:
+                    self._log(f"Operações serão realizadas nas BINARY com {alternative_asset} (payout: {alt_binary}%)", "INFO")
+                    return 'binary', alternative_asset
+                if alt_digital > 0:
+                    self._log(f"Operações serão realizadas nas DIGITAL com {alternative_asset} (payout: {alt_digital}%)", "INFO")
+                    return 'digital', alternative_asset
+            
+            self._log("Nenhum ativo disponível no momento", "ERROR")
+            return None, None
+        else:
+            # Modo manual - usar tipo configurado
+            if payouts[tipo] > 0:
+                self._log(f"Operações serão realizadas nas {tipo.upper()} (payout: {payouts[tipo]}%)", "INFO")
+                return tipo, asset
+            else:
+                self._log(f"Tipo {tipo} não disponível para {asset}", "ERROR")
+                return None, None
+
     def _wait_next_minute_edge(self, buffer_seconds: float = 0.5):
         """Sleep until the start of the next minute plus a small buffer.
         Uses server time to align entries for gale execution.
@@ -228,35 +292,6 @@ class BaseStrategy:
         except Exception:
             # Fallback: short sleep
             time.sleep(1)
-            try:
-                alt = self.api.get_best_available_asset()
-            except Exception:
-                pass
-            if alt and alt != asset:
-                self._log(f"Par {asset} sem payout. Alternando para {alt}", "WARNING")
-                return self._determine_operation_type(alt)
-            self._log("Par fechado, escolha outro", "ERROR")
-            return None, None
-        else:
-            # Check if current asset is available
-            payouts = self.api.get_payout(asset, force_refresh=True)
-            # Remover TURBO da consideração
-            if payouts['digital'] == 0 and payouts['binary'] == 0:
-                # Try to find alternative asset
-                alternative_asset = self.api.get_best_available_asset()
-                if alternative_asset:
-                    self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
-                    asset = alternative_asset
-                    payouts = self.api.get_payout(asset, force_refresh=True)
-                else:
-                    self._log("Nenhum ativo disponível no momento", "ERROR")
-                    return None, None
-            # Mapear configuração manual 'turbo' para 'digital'
-            tipo = getattr(self.config, 'tipo', 'digital')
-            if str(tipo).lower() == 'turbo':
-                self._log("Operações TURBO desativadas. Usando DIGITAL.", "WARNING")
-                tipo = 'digital'
-            return tipo, asset
             
         payouts = self.api.get_payout(asset, force_refresh=True)
         self._log(f"Payouts - Binary: {payouts['binary']}%, Digital: {payouts['digital']}%", "INFO")
@@ -629,6 +664,7 @@ class MHIStrategy(BaseStrategy):
         
         operation_type, current_asset = self._determine_operation_type(asset)
         if not operation_type or not current_asset:
+            self._log(f"[DEBUG] Estratégia parada: operation_type={operation_type}, current_asset={current_asset}", "ERROR")
             return
         
         # Update asset if it was changed
