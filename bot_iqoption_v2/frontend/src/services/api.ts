@@ -21,7 +21,7 @@ import type {
 
 class ApiService {
   private api: AxiosInstance;
-  private baseURL = 'http://3.208.9.68:8000/api';
+  private baseURL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
 
   constructor() {
     this.api = axios.create({

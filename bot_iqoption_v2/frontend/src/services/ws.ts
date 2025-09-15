@@ -29,12 +29,12 @@ export interface TradingSocket {
 }
 
 function defaultWsBase(): string {
-  // Prefer explicit env var if provided (e.g., ws://127.0.0.1:8000)
+  // Prefer explicit env var if provided
   const env = (import.meta as any)?.env;
-  const envUrl = env?.VITE_WS_URL || env?.VITE_BACKEND_WS_URL;
+  const envUrl = env?.VITE_WS_BASE_URL || env?.VITE_WS_URL || env?.VITE_BACKEND_WS_URL;
   if (envUrl) return envUrl.replace(/\/$/, '');
-  // Fallback to production backend default
-  return (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + '3.208.9.68:8000';
+  // Fallback to local development
+  return (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + '127.0.0.1:8000';
 }
 
 export function createTradingSocket(): TradingSocket {
