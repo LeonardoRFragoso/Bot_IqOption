@@ -33,8 +33,8 @@ function defaultWsBase(): string {
   const env = (import.meta as any)?.env;
   const envUrl = env?.VITE_WS_URL || env?.VITE_BACKEND_WS_URL;
   if (envUrl) return envUrl.replace(/\/$/, '');
-  // Fallback to local backend default used by REST client
-  return (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + '127.0.0.1:8000';
+  // Fallback to production backend default
+  return (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + '3.208.9.68:8000';
 }
 
 export function createTradingSocket(): TradingSocket {

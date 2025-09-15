@@ -228,42 +228,6 @@ class BaseStrategy:
         except Exception:
             # Fallback: short sleep
             time.sleep(1)
-    
-    def _determine_operation_type(self, asset: str) -> Tuple[str, str]:
-        """Determine best operation type and asset based on payouts"""
-        # Operação automática: somente DIGITAL ou BINARY (sem TURBO)
-        if self.config.tipo == 'automatico':
-            payouts = self.api.get_payout(asset)
-            digital = payouts.get('digital', 0) or 0
-            binary = payouts.get('binary', 0) or 0
-            # Nova estratégia: BINARY primeiro, DIGITAL como fallback
-            # - Preferir BINARY sempre que disponível (entrada mais rápida e confiável)
-            # - Usar DIGITAL apenas como fallback quando BINARY indisponível
-            try:
-                st = float(self.api.get_server_timestamp())
-                sec = st % 60.0
-            except Exception:
-                sec = 0.0
-            asset_upper = str(asset).upper()
-            is_otc = asset_upper.endswith('-OTC')
-            
-            # Regra 1: Se BINARY disponível, usar sempre (independente do payout)
-            if binary > 0:
-                self._log(f"Operações serão realizadas nas BINARY (payout: {binary}%)", "INFO")
-                return 'binary', asset
-            
-            # Regra 2: Se BINARY indisponível, usar DIGITAL como fallback
-            if digital > 0:
-                self._log(f"BINARY indisponível - usando DIGITAL como fallback (payout: {digital}%)", "INFO")
-                return 'digital', asset
-            
-            # Se ambos indisponíveis, manter lógica original
-            if max(digital, binary) > 0:
-                chosen = 'binary' if binary > 0 else 'digital'
-                self._log(f"Operações serão realizadas nas {chosen}", "INFO")
-                return chosen, asset
-            # Se ambos indisponíveis, tentar encontrar outro ativo
-            alt = None
             try:
                 alt = self.api.get_best_available_asset()
             except Exception:
@@ -275,7 +239,7 @@ class BaseStrategy:
             return None, None
         else:
             # Check if current asset is available
-            payouts = self.api.get_payout(asset)
+            payouts = self.api.get_payout(asset, force_refresh=True)
             # Remover TURBO da consideração
             if payouts['digital'] == 0 and payouts['binary'] == 0:
                 # Try to find alternative asset
@@ -283,7 +247,7 @@ class BaseStrategy:
                 if alternative_asset:
                     self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
                     asset = alternative_asset
-                    payouts = self.api.get_payout(asset)
+                    payouts = self.api.get_payout(asset, force_refresh=True)
                 else:
                     self._log("Nenhum ativo disponível no momento", "ERROR")
                     return None, None
@@ -294,7 +258,7 @@ class BaseStrategy:
                 tipo = 'digital'
             return tipo, asset
             
-        payouts = self.api.get_payout(asset)
+        payouts = self.api.get_payout(asset, force_refresh=True)
         self._log(f"Payouts - Binary: {payouts['binary']}%, Digital: {payouts['digital']}%", "INFO")
         
         # Check if any payout is available
@@ -303,7 +267,7 @@ class BaseStrategy:
             alternative_asset = self.api.get_best_available_asset()
             if alternative_asset:
                 self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
-                alt_payouts = self.api.get_payout(alternative_asset)
+                alt_payouts = self.api.get_payout(alternative_asset, force_refresh=True)
                 
                 # Prefer open instruments with highest payout
                 alt_open = {
@@ -349,7 +313,7 @@ class BaseStrategy:
         # If none of the instruments are open for this asset, try alternative asset
         alternative_asset = self.api.get_best_available_asset()
         if alternative_asset:
-            alt_payouts = self.api.get_payout(alternative_asset)
+            alt_payouts = self.api.get_payout(alternative_asset, force_refresh=True)
             alt_open = {
                 'digital': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'digital'),
                 'binary': getattr(self.api, 'is_asset_open', lambda a, t: True)(alternative_asset, 'binary'),

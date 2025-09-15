@@ -695,10 +695,22 @@ class IQOptionAPI:
         
         return status
     
-    def get_payout(self, asset: str) -> Dict[str, float]:
-        """Get payout information for an asset"""
+    def get_payout(self, asset: str, force_refresh: bool = False) -> Dict[str, float]:
+        """Get payout information for an asset
+        
+        Args:
+            asset: Asset symbol to get payout for
+            force_refresh: If True, bypass cache and fetch fresh data
+        """
         if not self.connected or not self.api:
             return {'binary': 0, 'turbo': 0, 'digital': 0}
+        
+        # Check cache first unless force_refresh is requested
+        if not force_refresh:
+            cached = self.get_payout_cached(asset, ttl=60)  # Reduced TTL to 60 seconds
+            if cached:
+                self._log_message(f"[PAYOUT-CACHE] Usando cache para {asset}: Binary={cached['binary']}%, Digital={cached['digital']}%", "DEBUG")
+                return cached
         
         try:
             with self._api_lock:
@@ -707,6 +719,7 @@ class IQOptionAPI:
                     self.connected = False
                     return {'binary': 0, 'turbo': 0, 'digital': 0}
                 try:
+                    self._log_message(f"[PAYOUT-FETCH] Buscando dados frescos para {asset}{'(FORCE)' if force_refresh else ''}", "DEBUG")
                     profit = self.api.get_all_profit()
                     all_assets = self.api.get_all_open_time()
                 except Exception as vend_e:
@@ -862,6 +875,7 @@ class IQOptionAPI:
                     and (is_open is not False)):
                     # If we don't explicitly know it's closed, honor the profit value
                     result['binary'] = round(profit_data * 100, 2)
+                    self._log_message(f"[PAYOUT-BINARY] {asset}: {result['binary']}% (raw: {profit_data}, open: {is_open})", "DEBUG")
                     
             except Exception as e:
                 self._log_message(f"Erro ao obter payout binary para {asset}: {str(e)}", "DEBUG")
@@ -882,10 +896,12 @@ class IQOptionAPI:
                 # Se o método não existir ou não retornar valor válido, usar heurística baseada no binary
                 if isinstance(digital_payout_val, (int, float)) and digital_payout_val > 0:
                     result['digital'] = round(digital_payout_val, 2)
+                    self._log_message(f"[PAYOUT-DIGITAL] {asset}: {result['digital']}% (método direto)", "DEBUG")
                 else:
                     heuristic = result['binary']
                     if heuristic > 0:
                         result['digital'] = heuristic
+                        self._log_message(f"[PAYOUT-DIGITAL] {asset}: {result['digital']}% (heurística baseada em binary)", "DEBUG")
             except Exception as payout_e:
                 # Manter silêncio em DEBUG para evitar ruído
                 self._log_message(f"Payout digital não disponível para {asset} (usando heurística). Detalhe: {str(payout_e)}", "DEBUG")
@@ -901,7 +917,9 @@ class IQOptionAPI:
                 return fb
             # Cachear resultado obtido
             try:
-                self._payout_cache[str(asset).upper()] = (dict(result), time.time())
+                cache_key = str(asset).upper()
+                self._payout_cache[cache_key] = (dict(result), time.time())
+                self._log_message(f"[PAYOUT-RESULT] {asset}: Binary={result['binary']}%, Digital={result['digital']}% (cached)", "INFO")
             except Exception:
                 pass
             return result
@@ -921,15 +939,24 @@ class IQOptionAPI:
                 self._log_message(f"Erro geral ao obter payout para {asset}: {str(e)}", "ERROR")
             return {'binary': 80, 'turbo': 0, 'digital': 80}  # Default payout, TURBO desativado
     
-    def get_payout_cached(self, asset: str, ttl: int = 180) -> Optional[Dict[str, float]]:
-        """Return cached payout if fresh, else None. Avoids heavy vendor calls in time-critical paths."""
+    def get_payout_cached(self, asset: str, ttl: int = 60) -> Optional[Dict[str, float]]:
+        """Return cached payout if fresh, else None. Avoids heavy vendor calls in time-critical paths.
+        
+        Args:
+            asset: Asset symbol
+            ttl: Time-to-live in seconds (default: 60 seconds, reduced from 180)
+        """
         try:
             key = str(asset).upper()
             cached = self._payout_cache.get(key)
             if cached and isinstance(cached, tuple) and len(cached) == 2:
                 data, ts = cached
-                if isinstance(data, dict) and (time.time() - ts) <= ttl:
+                age = time.time() - ts
+                if isinstance(data, dict) and age <= ttl:
+                    self._log_message(f"[PAYOUT-CACHE-HIT] {asset}: idade={age:.1f}s, TTL={ttl}s", "DEBUG")
                     return dict(data)
+                else:
+                    self._log_message(f"[PAYOUT-CACHE-MISS] {asset}: idade={age:.1f}s > TTL={ttl}s", "DEBUG")
         except Exception:
             pass
         return None
