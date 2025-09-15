@@ -41,6 +41,11 @@ export interface TradingConfiguration {
   // Additional fields
   default_strategy: 'mhi' | 'torres_gemeas' | 'mhi_m5' | 'rsi' | 'moving_average' | 'bollinger_bands' | 'engulfing' | 'candlestick' | 'macd';
   
+  // Filtros ativos e parâmetros personalizados
+  filtros_ativos?: string[];
+  media_movel_threshold?: number;
+  rodrigo_risco_threshold?: number;
+  
   // Torres Gêmeas specific parameters
   torres_event_driven?: boolean;
   torres_event_cooldown_sec?: number;
@@ -246,4 +251,21 @@ export interface PaymentRecord {
   description: string;
   paid_at?: string;
   created_at: string;
+}
+
+// Trading Control Panel types
+export interface Asset {
+  id: string;
+  name: string;
+  payout: number;
+  isOpen: boolean;
+  winRate?: number;
+}
+
+export interface Strategy {
+  id: string;
+  name: string;
+  description: string;
+  winRate?: number;
+  recommended?: boolean;
 }

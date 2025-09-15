@@ -1,0 +1,237 @@
+.strategy-filters-config {
+  padding: 20px;
+  margin: 16px 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
+
+.config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.config-header h6 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #1976d2;
+  font-weight: 600;
+}
+
+.enable-filters-switch {
+  margin-bottom: 20px;
+}
+
+.enable-filters-switch .MuiFormControlLabel-label {
+  font-weight: 500;
+  color: #333;
+}
+
+.filters-configuration {
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.section-title {
+  color: #1976d2;
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #e3f2fd;
+}
+
+.filters-selection {
+  margin-bottom: 24px;
+}
+
+.filters-selection .MuiTypography-subtitle2 {
+  color: #555;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.filter-chip {
+  margin: 4px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.filter-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.filter-chip.selected {
+  background: linear-gradient(45deg, #2196f3, #21cbf3);
+  color: white;
+  font-weight: 500;
+}
+
+.threshold-configuration {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  border-left: 4px solid #2196f3;
+}
+
+.threshold-configuration .MuiTypography-subtitle2 {
+  color: #333;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.threshold-label {
+  font-weight: 500;
+  margin-left: 8px;
+}
+
+.threshold-slider {
+  margin: 16px 0;
+}
+
+.threshold-slider .MuiSlider-thumb {
+  width: 20px;
+  height: 20px;
+}
+
+.threshold-slider .MuiSlider-track {
+  height: 6px;
+}
+
+.threshold-slider .MuiSlider-rail {
+  height: 6px;
+  opacity: 0.3;
+}
+
+.weights-configuration {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  border-left: 4px solid #4caf50;
+}
+
+.weights-configuration .MuiTypography-subtitle2 {
+  color: #333;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.weight-control {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+}
+
+.weight-label {
+  color: #555;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.weight-slider {
+  color: #4caf50;
+}
+
+.weight-slider .MuiSlider-thumb {
+  width: 16px;
+  height: 16px;
+}
+
+.weight-slider .MuiSlider-track {
+  height: 4px;
+}
+
+.weight-slider .MuiSlider-rail {
+  height: 4px;
+  opacity: 0.3;
+}
+
+.configuration-summary {
+  padding: 16px;
+  background: rgba(76, 175, 80, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+}
+
+.configuration-summary .MuiTypography-subtitle2 {
+  color: #2e7d32;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.configuration-summary .MuiTypography-body2 {
+  margin-bottom: 4px;
+  line-height: 1.6;
+}
+
+.configuration-summary strong {
+  color: #1976d2;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .strategy-filters-config {
+    padding: 16px;
+    margin: 12px 0;
+  }
+  
+  .config-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .filter-chip {
+    margin: 2px;
+    font-size: 0.75rem;
+  }
+  
+  .threshold-configuration,
+  .weights-configuration,
+  .configuration-summary {
+    padding: 12px;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .strategy-filters-config {
+    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+    color: #ecf0f1;
+  }
+  
+  .section-title {
+    color: #3498db;
+    border-bottom-color: #34495e;
+  }
+  
+  .threshold-configuration,
+  .weights-configuration {
+    background: rgba(52, 73, 94, 0.7);
+  }
+  
+  .weight-control {
+    background: rgba(44, 62, 80, 0.5);
+  }
+  
+  .configuration-summary {
+    background: rgba(46, 125, 50, 0.2);
+    border-color: rgba(46, 125, 50, 0.5);
+  }
+}

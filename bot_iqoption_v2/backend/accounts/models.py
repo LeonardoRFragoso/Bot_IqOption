@@ -294,6 +294,28 @@ class TradingConfiguration(models.Model):
         help_text="Estratégia padrão"
     )
     
+    # Filtros ativos selecionados pelo usuário
+    filtros_ativos = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Lista de filtros ativos para confirmação de sinais"
+    )
+    
+    # Parâmetros dos filtros personalizados
+    media_movel_threshold = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.15,
+        help_text="Threshold para filtro de média móvel"
+    )
+    
+    rodrigo_risco_threshold = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.75,
+        help_text="Threshold para filtro Rodrigo Risco"
+    )
+    
     # Parâmetros específicos da estratégia Torres Gêmeas
     torres_event_driven = models.BooleanField(
         default=False,

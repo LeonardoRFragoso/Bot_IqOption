@@ -25,24 +25,10 @@ import {
   AutoAwesome,
 } from '@mui/icons-material';
 import apiService from '../../services/api';
-import type { TradingSession, Operation } from '../../types/index';
+import type { TradingSession, Operation, Asset, Strategy } from '../../types/index';
 import { useTradingRealtime } from '../../hooks/useRealtime';
-
-interface Asset {
-  id: string;
-  name: string;
-  payout: number;
-  isOpen: boolean;
-  winRate?: number;
-}
-
-interface Strategy {
-  id: string;
-  name: string;
-  description: string;
-  winRate?: number;
-  recommended?: boolean;
-}
+import StrategyFiltersConfig from '../StrategyFiltersConfig/StrategyFiltersConfig';
+import type { StrategyFilterConfig } from '../StrategyFiltersConfig/StrategyFiltersConfig';
 
 interface TradingControlPanelProps {
   onSessionChange?: (session: TradingSession | null) => void;
@@ -59,6 +45,12 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
   const { socket } = useTradingRealtime();
   const [liveOps, setLiveOps] = useState<Map<string, Operation>>(new Map());
   const [isStarting, setIsStarting] = useState(false);
+  const [strategyFilterConfig, setStrategyFilterConfig] = useState<StrategyFilterConfig>({
+    enableFilters: false,
+    confirmationFilters: [],
+    confirmationThreshold: 0.6,
+    filterWeights: {}
+  });
 
   // Trading control functions will use apiService directly
 
@@ -261,48 +253,6 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
           winRate: strategyPerformance['mhi_m5'] || 71,
           recommended: true 
         },
-        { 
-          id: 'rsi', 
-          name: 'RSI', 
-          description: 'Relative Strength Index', 
-          winRate: strategyPerformance['rsi'] || 65,
-          recommended: false 
-        },
-        { 
-          id: 'moving_average', 
-          name: 'Moving Average', 
-          description: 'Média Móvel Simples', 
-          winRate: strategyPerformance['moving_average'] || 62,
-          recommended: false 
-        },
-        { 
-          id: 'bollinger_bands', 
-          name: 'Bollinger Bands', 
-          description: 'Bandas de Bollinger', 
-          winRate: strategyPerformance['bollinger_bands'] || 67,
-          recommended: false 
-        },
-        { 
-          id: 'engulfing', 
-          name: 'Engulfing', 
-          description: 'Padrão de Engolfo', 
-          winRate: strategyPerformance['engulfing'] || 69,
-          recommended: false 
-        },
-        { 
-          id: 'candlestick', 
-          name: 'Candlestick Patterns', 
-          description: 'Padrões de Candlestick', 
-          winRate: strategyPerformance['candlestick'] || 64,
-          recommended: false 
-        },
-        { 
-          id: 'macd', 
-          name: 'MACD', 
-          description: 'Moving Average Convergence Divergence', 
-          winRate: strategyPerformance['macd'] || 66,
-          recommended: false 
-        },
       ];
 
       // Use real data if available, otherwise fallback to defaults
@@ -358,9 +308,9 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       ];
       
       const fallbackStrategies: Strategy[] = [
-        { id: 'mhi', name: 'MHI', description: 'Média Móvel com Indicadores', recommended: true },
-        { id: 'torres_gemeas', name: 'Torres Gêmeas', description: 'Estratégia de Reversão', recommended: false },
-        { id: 'mhi_m5', name: 'MHI M5', description: 'MHI para timeframe de 5 minutos', recommended: true },
+        { id: 'mhi', name: 'MHI', description: 'Média Móvel com Indicadores', recommended: true, winRate: 72 },
+        { id: 'torres_gemeas', name: 'Torres Gêmeas', description: 'Estratégia de Reversão', recommended: false, winRate: 68 },
+        { id: 'mhi_m5', name: 'MHI M5', description: 'MHI para timeframe de 5 minutos', recommended: true, winRate: 71 },
       ];
       
       setAssets(fallbackAssets);
@@ -375,6 +325,30 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
     
     try {
       setIsStarting(true);
+      
+      // Save filters to user configuration first
+      if (strategyFilterConfig.enableFilters && strategyFilterConfig.confirmationFilters.length > 0) {
+        try {
+          await apiService.updateTradingConfig({
+            filtros_ativos: strategyFilterConfig.confirmationFilters,
+            media_movel_threshold: strategyFilterConfig.filterWeights['moving_average'] || 0.15,
+            rodrigo_risco_threshold: strategyFilterConfig.confirmationThreshold || 0.75
+          });
+        } catch (error) {
+          console.error('Failed to save filters:', error);
+        }
+      }
+      
+      // Prepare strategy configuration with filters
+      const strategyConfig = {
+        strategy: selectedStrategy,
+        ...(strategyFilterConfig.enableFilters && {
+          confirmation_filters: strategyFilterConfig.confirmationFilters,
+          confirmation_threshold: strategyFilterConfig.confirmationThreshold,
+          filter_weights: strategyFilterConfig.filterWeights
+        })
+      };
+      
       // Prevent 400 if there is an active session (RUNNING/PAUSED)
       try {
         const active = await apiService.getActiveSession();
@@ -395,7 +369,7 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
         accountType = 'PRACTICE';
       }
 
-      const session = await apiService.startTrading(selectedStrategy, selectedAsset, accountType);
+      const session = await apiService.startTrading(selectedStrategy, selectedAsset, accountType, strategyConfig);
       setCurrentSession(session);
       setTradingStatus('running');
       onSessionChange?.(session);
@@ -454,7 +428,7 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       // ignore
     }
     try {
-      await apiService.runAssetCatalog(['mhi', 'torres_gemeas', 'mhi_m5', 'rsi', 'moving_average', 'bollinger_bands', 'engulfing', 'candlestick', 'macd']);
+      await apiService.runAssetCatalog(['mhi', 'torres_gemeas', 'mhi_m5']);
       
       // Poll for completion instead of fixed timeout
       await waitForCatalogCompletion();
@@ -851,6 +825,12 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
           </Tooltip>
         </Box>
       </CardContent>
+      
+      {/* Strategy Filters Configuration */}
+      <StrategyFiltersConfig 
+        selectedStrategy={selectedStrategy}
+        onConfigChange={setStrategyFilterConfig}
+      />
     </Card>
   );
 };

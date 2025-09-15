@@ -192,9 +192,54 @@ class CatalogAssetsSerializer(serializers.Serializer):
             ('bollinger_bands', 'Bollinger Bands'),
             ('engulfing', 'Engulfing'),
             ('candlestick', 'Candlestick Patterns'),
-            ('macd', 'MACD')
+            ('macd', 'MACD'),
         ],
         default=['mhi', 'torres_gemeas', 'mhi_m5', 'rsi', 'moving_average', 'bollinger_bands', 'engulfing', 'candlestick', 'macd']
+    )
+
+
+class StrategyConfigSerializer(serializers.Serializer):
+    """Serializer for strategy configuration with optional confirmation filters"""
+    
+    strategy = serializers.ChoiceField(
+        choices=[
+            ('mhi', 'MHI M1'),
+            ('torres_gemeas', 'Torres Gêmeas'),
+            ('mhi_m5', 'MHI M5'),
+            ('rsi', 'RSI'),
+            ('moving_average', 'Moving Average'),
+            ('bollinger_bands', 'Bollinger Bands'),
+            ('engulfing', 'Engulfing'),
+            ('candlestick', 'Candlestick Patterns'),
+            ('macd', 'MACD')
+        ]
+    )
+    
+    confirmation_filters = serializers.MultipleChoiceField(
+        choices=[
+            ('macd', 'MACD'),
+            ('bollinger_bands', 'Bollinger Bands'),
+            ('rsi', 'RSI'),
+            ('moving_average', 'Moving Average'),
+            ('engulfing', 'Engulfing'),
+            ('candlestick', 'Candlestick Patterns')
+        ],
+        required=False,
+        allow_empty=True
+    )
+    
+    confirmation_threshold = serializers.FloatField(
+        min_value=0.0,
+        max_value=1.0,
+        default=0.6,
+        required=False,
+        help_text="Threshold mínimo para confirmação (0.0 a 1.0)"
+    )
+    
+    filter_weights = serializers.DictField(
+        child=serializers.FloatField(min_value=0.0, max_value=1.0),
+        required=False,
+        help_text="Pesos dos filtros de confirmação"
     )
 
 

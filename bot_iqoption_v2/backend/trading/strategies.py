@@ -38,6 +38,20 @@ class BaseStrategy:
         self.running = True
         self._log("Estratégia iniciada", "INFO")
         
+        # Log filtros ativos para visibilidade
+        if hasattr(self.config, 'filtros_ativos'):
+            filtros = getattr(self.config, 'filtros_ativos', [])
+            if filtros:
+                self._log(f"[FILTROS] Ativos: {filtros}", "INFO")
+                
+                # Log parâmetros específicos dos filtros
+                if hasattr(self.config, 'media_movel_threshold'):
+                    self._log(f"[FILTROS] Media Movel: {self.config.media_movel_threshold}", "INFO")
+                if hasattr(self.config, 'rodrigo_risco_threshold'):
+                    self._log(f"[FILTROS] Rodrigo Risco: {self.config.rodrigo_risco_threshold}", "INFO")
+            else:
+                self._log("[FILTROS] Nenhum filtro ativo - usando estrategia base", "INFO")
+        
     def stop(self):
         """Stop strategy execution"""
         # Idempotent stop to avoid duplicate logs when called multiple times
@@ -1357,6 +1371,27 @@ def get_strategy_info():
                 'macd_slow_period': 26,
                 'macd_signal_period': 9,
                 'macd_min_histogram': 0.00001
+            }
+        },
+        'enhanced': {
+            'name': 'Estratégia Aprimorada',
+            'description': 'Sistema com estratégia principal + filtros de confirmação para maior assertividade',
+            'timeframe': 'Configurável',
+            'expiration': 'Baseado na estratégia principal',
+            'type': 'hybrid_system',
+            'parameters': {
+                'primary_strategy': 'mhi',
+                'confirmation_filters': ['macd', 'bollinger_bands', 'rsi'],
+                'min_confirmations': 1,
+                'confirmation_weight_threshold': 0.6,
+                'strategy_weights': {
+                    'macd': 0.25,
+                    'bollinger_bands': 0.25,
+                    'rsi': 0.20,
+                    'moving_average': 0.15,
+                    'engulfing': 0.10,
+                    'candlestick': 0.05
+                }
             }
         }
     }

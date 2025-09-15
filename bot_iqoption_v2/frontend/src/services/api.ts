@@ -157,10 +157,11 @@ class ApiService {
   }
 
   // Trading Control methods
-  async startTrading(strategy: string, asset: string = 'EURUSD', account_type: string = 'PRACTICE'): Promise<TradingSession> {
+  async startTrading(strategy: string, asset: string = 'EURUSD', account_type: string = 'PRACTICE', strategyConfig?: any): Promise<TradingSession> {
     const response: AxiosResponse<TradingSession> = await this.api.post('/trading/start/', { 
       strategy, 
-      asset, 
+      asset,
+      strategy_config: strategyConfig, 
       account_type 
     });
     return response.data;

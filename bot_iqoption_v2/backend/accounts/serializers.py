@@ -98,6 +98,8 @@ class TradingConfigurationSerializer(serializers.ModelSerializer):
             'analise_medias', 'velas_medias', 'tipo_par',
             'martingale_usar', 'martingale_niveis', 'martingale_fator',
             'soros_usar', 'soros_niveis', 'default_strategy',
+            # Filtros ativos e parâmetros
+            'filtros_ativos', 'media_movel_threshold', 'rodrigo_risco_threshold',
             # Torres Gêmeas params (optional)
             'torres_event_driven', 'torres_event_cooldown_sec',
             'torres_timeframe', 'torres_lookback',
