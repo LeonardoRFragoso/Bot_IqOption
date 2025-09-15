@@ -236,10 +236,9 @@ class BaseStrategy:
             payouts = self.api.get_payout(asset)
             digital = payouts.get('digital', 0) or 0
             binary = payouts.get('binary', 0) or 0
-            # Heurísticas para reduzir atraso de entrada, respeitando preferências do usuário:
-            # - Em caso de EMPATE de payout (>0), preferir DIGITAL (inclusive em OTC)
-            # - Preferir BINARY se já passamos de 1s do minuto (entrada tardia em digital costuma atrasar)
-            # - Usar DIGITAL quando vantagem for significativa e ainda estivermos no início do minuto
+            # Nova estratégia: BINARY primeiro, DIGITAL como fallback
+            # - Preferir BINARY sempre que disponível (entrada mais rápida e confiável)
+            # - Usar DIGITAL apenas como fallback quando BINARY indisponível
             try:
                 st = float(self.api.get_server_timestamp())
                 sec = st % 60.0
@@ -247,37 +246,31 @@ class BaseStrategy:
                 sec = 0.0
             asset_upper = str(asset).upper()
             is_otc = asset_upper.endswith('-OTC')
-            digital_better_margin = digital - binary  # margem de vantagem do digital
-            # Regra 1: Se payouts forem IGUAIS (>0), preferir DIGITAL (inclusive em OTC)
-            if digital > 0 and digital == binary:
-                self._log("Payouts iguais — preferindo DIGITAL conforme preferência", "INFO")
-                return 'digital', asset
-            # Regra 3: Após 1s do minuto → BINARY (para 1m)
-            if sec > 1.0 and binary > 0:
-                self._log("Segundo atual > 1s — preferindo BINARY para entrada imediata", "INFO")
+            
+            # Regra 1: Se BINARY disponível, usar sempre (independente do payout)
+            if binary > 0:
+                self._log(f"Operações serão realizadas nas BINARY (payout: {binary}%)", "INFO")
                 return 'binary', asset
-            # Regra 4: DIGITAL somente com vantagem relevante (>=10pp) e no início do minuto
-            if digital >= binary + 10 and sec <= 1.0 and digital > 0:
-                self._log("Operações serão realizadas nas digital (vantagem significativa)", "INFO")
+            
+            # Regra 2: Se BINARY indisponível, usar DIGITAL como fallback
+            if digital > 0:
+                self._log(f"BINARY indisponível - usando DIGITAL como fallback (payout: {digital}%)", "INFO")
                 return 'digital', asset
-            # Padrão: se ambos > 0, escolher o maior payout
+            
+            # Se ambos indisponíveis, manter lógica original
             if max(digital, binary) > 0:
-                chosen = 'digital' if digital >= binary else 'binary'
+                chosen = 'binary' if binary > 0 else 'digital'
                 self._log(f"Operações serão realizadas nas {chosen}", "INFO")
                 return chosen, asset
-            # Se DIGITAL indisponível, tentar encontrar outro ativo com DIGITAL disponível
+            # Se ambos indisponíveis, tentar encontrar outro ativo
             alt = None
             try:
                 alt = self.api.get_best_available_asset()
             except Exception:
                 pass
             if alt and alt != asset:
-                self._log(f"Par {asset} sem payout digital. Alternando para {alt}", "WARNING")
+                self._log(f"Par {asset} sem payout. Alternando para {alt}", "WARNING")
                 return self._determine_operation_type(alt)
-            # Como último recurso, permitir BINARY (não-turbo) para compatibilidade
-            if binary > 0:
-                self._log("Digital indisponível. Utilizando binary.", "WARNING")
-                return 'binary', asset
             self._log("Par fechado, escolha outro", "ERROR")
             return None, None
         else:
