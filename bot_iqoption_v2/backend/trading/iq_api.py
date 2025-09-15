@@ -1191,6 +1191,85 @@ class IQOptionAPI:
                                 return
                             # Se cond_no_binary for falso mas mesmo assim não concluímos (situação improvável), prosseguimos para envio digital
 
+                        # Tentativa de envio digital mesmo sem instrument_id no cache de quotes
+                        try:
+                            self._log_message(
+                                f"Tentando envio digital direto | instrument_id={instrument_id}",
+                                "DEBUG"
+                            )
+                            with self._api_lock:
+                                digital_ok, digital_id = self.api.buy_digital_spot(instrument_id, amount)
+                            
+                            if digital_ok:
+                                self._log_message(
+                                    f"Ordem digital OK | order_id={digital_id} | server={self._format_server_time()}",
+                                    "INFO"
+                                )
+                                # Register effective order type mapping for this order
+                                try:
+                                    self._last_effective_option_type = 'digital'
+                                    self._order_type_by_id[str(digital_id)] = 'digital'
+                                except Exception:
+                                    pass
+                                result_holder['success'] = True
+                                result_holder['order_id'] = digital_id
+                                result_holder['effective_type'] = 'digital'
+                                result_holder['done'] = True
+                                return
+                            else:
+                                self._log_message(
+                                    f"Ordem digital falhou | detalhe={digital_id}",
+                                    "ERROR"
+                                )
+                                result_holder['success'] = False
+                                result_holder['order_id'] = digital_id
+                                result_holder['done'] = True
+                                return
+                        except Exception as digital_ex:
+                            self._log_message(f"Erro no envio digital: {str(digital_ex)}", "ERROR")
+                            result_holder['success'] = False
+                            result_holder['order_id'] = None
+                            result_holder['done'] = True
+                            return
+
+                    else:
+                        # Binary options path for non-digital orders
+                        try:
+                            with self._api_lock:
+                                binary_ok, binary_id = self.api.buy(amount, asset, direction, int(expiration))
+                            
+                            if binary_ok:
+                                self._log_message(
+                                    f"Ordem binary OK | order_id={binary_id} | server={self._format_server_time()}",
+                                    "INFO"
+                                )
+                                # Register effective order type mapping for this order
+                                try:
+                                    self._last_effective_option_type = 'binary'
+                                    self._order_type_by_id[str(binary_id)] = 'binary'
+                                except Exception:
+                                    pass
+                                result_holder['success'] = True
+                                result_holder['order_id'] = binary_id
+                                result_holder['effective_type'] = 'binary'
+                                result_holder['done'] = True
+                                return
+                            else:
+                                self._log_message(
+                                    f"Ordem binary falhou | detalhe={binary_id}",
+                                    "ERROR"
+                                )
+                                result_holder['success'] = False
+                                result_holder['order_id'] = binary_id
+                                result_holder['done'] = True
+                                return
+                        except Exception as binary_ex:
+                            self._log_message(f"Erro no envio binary: {str(binary_ex)}", "ERROR")
+                            result_holder['success'] = False
+                            result_holder['order_id'] = None
+                            result_holder['done'] = True
+                            return
+
                 except Exception as be:
                     result_holder['error'] = str(be)
                 finally:
