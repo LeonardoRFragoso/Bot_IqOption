@@ -1,4 +1,20 @@
-# IQ Option Trading Bot - Backend
+# 🤖 IQ Option Trading Bot - Backend
+
+<div align="center">
+
+[![Django](https://img.shields.io/badge/Django-4.x-092E20?style=for-the-badge&logo=django&logoColor=white)](https://www.djangoproject.com/)
+[![DRF](https://img.shields.io/badge/DRF-3.14-red?style=for-the-badge)](https://www.django-rest-framework.org/)
+[![Celery](https://img.shields.io/badge/Celery-5.x-37814A?style=for-the-badge&logo=celery&logoColor=white)](https://celeryproject.org/)
+[![Redis](https://img.shields.io/badge/Redis-7.x-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io/)
+[![WebSocket](https://img.shields.io/badge/WebSocket-Channels-blue?style=for-the-badge)]()
+
+**Backend moderno em Django para bot de trading na IQ Option com API REST, WebSocket e monitoramento em tempo real.**
+
+[Funcionalidades](#features) • [Instalação](#installation) • [API](#api-endpoints) • [Estratégias](#trading-strategies)
+
+</div>
+
+---
 
 Modern Django-based backend for IQ Option trading bot with REST API, WebSocket support, and real-time monitoring.
 
