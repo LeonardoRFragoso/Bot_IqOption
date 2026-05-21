@@ -188,17 +188,11 @@ class CatalogAssetsSerializer(serializers.Serializer):
     
     strategies = serializers.MultipleChoiceField(
         choices=[
-            # Estratégias principais (para catalogação)
+            # APENAS estratégias principais para catalogação
+            # Filtros de confirmação (RSI, MACD, Bollinger, etc.) NÃO são catalogados
             ('mhi', 'MHI M1'),
             ('torres_gemeas', 'Torres Gêmeas'),
             ('mhi_m5', 'MHI M5'),
-            # Estratégias adicionais / filtros de confirmação
-            ('rsi', 'RSI'),
-            ('moving_average', 'Moving Average'),
-            ('bollinger_bands', 'Bollinger Bands'),
-            ('engulfing', 'Engulfing'),
-            ('candlestick', 'Candlestick'),
-            ('macd', 'MACD'),
         ],
         default=['mhi', 'torres_gemeas', 'mhi_m5'],
         required=False
