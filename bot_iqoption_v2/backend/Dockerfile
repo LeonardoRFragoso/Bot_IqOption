@@ -23,9 +23,5 @@ COPY . .
 # Collect static files (ignore errors)
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
 
-# Copy and prepare startup script
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh && sed -i 's/\r$//' /app/start.sh
-
-# Run the startup script with sh
-CMD ["/bin/sh", "/app/start.sh"]
+# Use Python script to handle PORT - more reliable than shell
+CMD ["python", "run_server.py"]
