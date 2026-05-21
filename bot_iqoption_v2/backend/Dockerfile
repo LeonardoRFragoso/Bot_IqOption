@@ -23,9 +23,6 @@ COPY . .
 # Collect static files (ignore errors)
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
 
-# Copy and set permissions for entrypoint
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
 # Run migrations and start the server
-CMD ["/app/entrypoint.sh"]
+# Using shell form to ensure environment variable expansion
+CMD python manage.py migrate && daphne -b 0.0.0.0 -p ${PORT:-8000} bot_iqoption.asgi:application
