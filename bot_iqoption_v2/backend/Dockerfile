@@ -23,12 +23,9 @@ COPY . .
 # Collect static files (ignore errors)
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
 
-# Create startup script inline
-RUN echo '#!/bin/sh\n\
-PORT="${PORT:-8000}"\n\
-echo "Starting with PORT=$PORT"\n\
-python manage.py migrate\n\
-exec daphne -b 0.0.0.0 -p "$PORT" bot_iqoption.asgi:application' > /app/start.sh && chmod +x /app/start.sh
+# Copy and prepare startup script
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh && sed -i 's/\r$//' /app/start.sh
 
-# Run the startup script
+# Run the startup script with sh
 CMD ["/bin/sh", "/app/start.sh"]
