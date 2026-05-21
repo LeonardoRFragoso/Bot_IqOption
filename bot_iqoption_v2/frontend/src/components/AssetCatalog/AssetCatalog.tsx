@@ -27,6 +27,7 @@ import type { AssetCatalog as _AssetCatalogType } from '../../types/index';
 const AssetCatalog: React.FC = () => {
   const [runningCatalog, setRunningCatalog] = useState(false);
   const [catalogProgress, setCatalogProgress] = useState<string>('');
+  const [justStarted, setJustStarted] = useState(false); // Flag to prevent immediate status check
   const { data: assets, loading, error, refetch, runCatalog } = useAssetCatalog();
 
   // Check catalog status on mount and poll while running
@@ -38,15 +39,18 @@ const AssetCatalog: React.FC = () => {
         setCatalogProgress('Catalogação em andamento...');
         return true;
       } else {
-        setRunningCatalog(false);
-        setCatalogProgress('');
+        // Only set to false if we didn't just start (give backend time to update)
+        if (!justStarted) {
+          setRunningCatalog(false);
+          setCatalogProgress('');
+        }
         return false;
       }
     } catch (err) {
       console.error('Erro ao verificar status:', err);
       return false;
     }
-  }, []);
+  }, [justStarted]);
 
   useEffect(() => {
     // Check status on mount
@@ -73,15 +77,17 @@ const AssetCatalog: React.FC = () => {
 
   const handleRunCatalog = async () => {
     setRunningCatalog(true);
+    setJustStarted(true);
     setCatalogProgress('Iniciando catalogação...');
     try {
       await runCatalog();
       setCatalogProgress('Catalogação em andamento...');
-      // Keep polling to monitor status - don't set runningCatalog to false here
-      // The polling effect will handle status updates
+      // Give backend 3 seconds to update status before allowing status checks to set running=false
+      setTimeout(() => setJustStarted(false), 3000);
     } catch (err) {
       console.error('Erro ao executar catalogação:', err);
       setRunningCatalog(false);
+      setJustStarted(false);
       setCatalogProgress('Erro ao iniciar catalogação');
     }
   };

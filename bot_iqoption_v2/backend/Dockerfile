@@ -1,5 +1,6 @@
 FROM python:3.13-slim
 
+# Force rebuild - v2
 WORKDIR /app
 
 # Install system dependencies - including libpq-dev for psycopg2
