@@ -3,7 +3,6 @@ import {
   Box,
   Paper,
   Typography,
-  Grid,
   Card,
   CardContent,
   FormControl,
@@ -102,8 +101,8 @@ const Charts: React.FC = () => {
       </Typography>
 
       <Paper sx={{ p: 2, mb: 3 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} sm={4}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '4fr 3fr 3fr' }, gap: 2, alignItems: 'center' }}>
+          <Box>
             <FormControl fullWidth>
               <InputLabel>Ativo</InputLabel>
               <Select
@@ -118,8 +117,8 @@ const Charts: React.FC = () => {
                 ))}
               </Select>
             </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
+          </Box>
+          <Box>
             <FormControl fullWidth>
               <InputLabel>Timeframe</InputLabel>
               <Select
@@ -135,8 +134,8 @@ const Charts: React.FC = () => {
                 <MenuItem value="1d">1 Dia</MenuItem>
               </Select>
             </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={3}>
+          </Box>
+          <Box>
             <Button
               variant="contained"
               startIcon={<Refresh />}
@@ -145,79 +144,71 @@ const Charts: React.FC = () => {
             >
               Atualizar Dados
             </Button>
-          </Grid>
-        </Grid>
+          </Box>
+        </Box>
       </Paper>
 
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BarChart sx={{ color: 'primary.main' }} />
-                <Typography variant="h6">Preço Atual</Typography>
-              </Box>
-              <Typography variant="h4" sx={{ mt: 1, fontWeight: 'bold' }}>
-                {currentPrice.toFixed(5)}
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr 1fr' }, gap: 2, mb: 3 }}>
+        <Card>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <BarChart sx={{ color: 'primary.main' }} />
+              <Typography variant="h6">Preço Atual</Typography>
+            </Box>
+            <Typography variant="h4" sx={{ mt: 1, fontWeight: 'bold' }}>
+              {currentPrice.toFixed(5)}
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+              {isPositive ? (
+                <TrendingUp sx={{ color: 'success.main' }} />
+              ) : (
+                <TrendingDown sx={{ color: 'error.main' }} />
+              )}
+              <Typography 
+                variant="body2" 
+                sx={{ color: isPositive ? 'success.main' : 'error.main' }}
+              >
+                {isPositive ? '+' : ''}{(priceChange * 10000).toFixed(1)} pips
               </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-                {isPositive ? (
-                  <TrendingUp sx={{ color: 'success.main' }} />
-                ) : (
-                  <TrendingDown sx={{ color: 'error.main' }} />
-                )}
-                <Typography 
-                  variant="body2" 
-                  sx={{ color: isPositive ? 'success.main' : 'error.main' }}
-                >
-                  {isPositive ? '+' : ''}{(priceChange * 10000).toFixed(1)} pips
-                </Typography>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6">Payout</Typography>
-              <Typography variant="h4" sx={{ mt: 1, fontWeight: 'bold', color: 'primary.main' }}>
-                {currentAsset?.payout}%
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Retorno se ganhar
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6">Status</Typography>
-              <Chip 
-                label={currentAsset?.isOpen ? 'Mercado Aberto' : 'Mercado Fechado'}
-                color={currentAsset?.isOpen ? 'success' : 'error'}
-                sx={{ mt: 1 }}
-              />
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Disponível para trading
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6">Timeframe</Typography>
-              <Typography variant="h4" sx={{ mt: 1, fontWeight: 'bold' }}>
-                {timeframe}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Intervalo de tempo
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+            </Box>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent>
+            <Typography variant="h6">Payout</Typography>
+            <Typography variant="h4" sx={{ mt: 1, fontWeight: 'bold', color: 'primary.main' }}>
+              {currentAsset?.payout}%
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Retorno se ganhar
+            </Typography>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent>
+            <Typography variant="h6">Status</Typography>
+            <Chip 
+              label={currentAsset?.isOpen ? 'Mercado Aberto' : 'Mercado Fechado'}
+              color={currentAsset?.isOpen ? 'success' : 'error'}
+              sx={{ mt: 1 }}
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Disponível para trading
+            </Typography>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent>
+            <Typography variant="h6">Timeframe</Typography>
+            <Typography variant="h4" sx={{ mt: 1, fontWeight: 'bold' }}>
+              {timeframe}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Intervalo de tempo
+            </Typography>
+          </CardContent>
+        </Card>
+      </Box>
 
       <Paper sx={{ p: 2 }}>
         <Typography variant="h6" gutterBottom>

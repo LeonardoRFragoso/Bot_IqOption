@@ -21,7 +21,8 @@ import {
 import { PlayArrow, Refresh, TrendingUp, TrendingDown, HourglassEmpty } from '@mui/icons-material';
 import { useAssetCatalog } from '../../hooks/useApi';
 import apiService from '../../services/api';
-import type { AssetCatalog as AssetCatalogType } from '../../types/index';
+// AssetCatalogType imported for potential future use
+import type { AssetCatalog as _AssetCatalogType } from '../../types/index';
 
 const AssetCatalog: React.FC = () => {
   const [runningCatalog, setRunningCatalog] = useState(false);
@@ -85,12 +86,14 @@ const AssetCatalog: React.FC = () => {
     return isNaN(numValue) ? '0.00%' : `${numValue.toFixed(2)}%`;
   };
 
-  const formatCurrency = (value: number) => {
+  // formatCurrency available for future use
+  const _formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
       currency: 'USD',
     }).format(value);
   };
+  void _formatCurrency;
 
   const formatDateTime = (dateString: string) => {
     return new Date(dateString).toLocaleString('pt-BR');
@@ -102,12 +105,14 @@ const AssetCatalog: React.FC = () => {
     return 'error';
   };
 
-  const getRecommendationIcon = (isRecommended: boolean, winRate: number) => {
+  // getRecommendationIcon available for future use
+  const _getRecommendationIcon = (isRecommended: boolean, winRate: number) => {
     if (isRecommended && winRate >= 60) {
       return <TrendingUp color="success" fontSize="small" />;
     }
     return <TrendingDown color="error" fontSize="small" />;
   };
+  void _getRecommendationIcon;
 
   if (loading) {
     return (
