@@ -23,6 +23,12 @@ COPY . .
 # Collect static files (ignore errors)
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
 
-# Run migrations and start the server
-# Using shell form to ensure environment variable expansion
-CMD python manage.py migrate && daphne -b 0.0.0.0 -p ${PORT:-8000} bot_iqoption.asgi:application
+# Create startup script inline
+RUN echo '#!/bin/sh\n\
+PORT="${PORT:-8000}"\n\
+echo "Starting with PORT=$PORT"\n\
+python manage.py migrate\n\
+exec daphne -b 0.0.0.0 -p "$PORT" bot_iqoption.asgi:application' > /app/start.sh && chmod +x /app/start.sh
+
+# Run the startup script
+CMD ["/bin/sh", "/app/start.sh"]
