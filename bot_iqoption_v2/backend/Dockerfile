@@ -23,4 +23,4 @@ COPY . .
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
 
 # Run migrations and start the server
-CMD ["sh", "-c", "python manage.py migrate && daphne -b 0.0.0.0 -p $PORT bot_iqoption.asgi:application"]
+CMD ["sh", "-c", "python manage.py migrate && daphne -b 0.0.0.0 -p ${PORT:-8000} bot_iqoption.asgi:application"]
