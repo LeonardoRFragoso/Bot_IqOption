@@ -4,7 +4,7 @@
     "builder": "dockerfile"
   },
   "deploy": {
-    "startCommand": "daphne -b 0.0.0.0 -p $PORT bot_iqoption.asgi:application",
+    "startCommand": "python run_server.py",
     "restartPolicyMaxRetries": 5
   }
 }
