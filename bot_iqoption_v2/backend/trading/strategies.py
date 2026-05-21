@@ -456,15 +456,22 @@ class BaseStrategy:
         
         # Remover TURBO da consideração
         if payouts['digital'] == 0 and payouts['binary'] == 0:
-            # Try to find alternative asset
-            alternative_asset = self.api.get_best_available_asset()
-            if alternative_asset:
-                self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
-                asset = alternative_asset
+            # Primeiro, tentar reconectar - pode ser problema de conexão
+            self._log("Payout 0 detectado - verificando conexão...", "WARNING")
+            if hasattr(self.api, '_attempt_reconnection') and self.api._attempt_reconnection():
+                self._log("Reconexão realizada - buscando payouts novamente", "INFO")
                 payouts = self.api.get_payout(asset, force_refresh=True)
-            else:
-                self._log("Nenhum ativo disponível no momento", "ERROR")
-                return None, None
+            
+            # Se ainda for 0, tentar ativo alternativo
+            if payouts['digital'] == 0 and payouts['binary'] == 0:
+                alternative_asset = self.api.get_best_available_asset()
+                if alternative_asset:
+                    self._log(f"Ativo {asset} fechado, mudando para {alternative_asset}", "WARNING")
+                    asset = alternative_asset
+                    payouts = self.api.get_payout(asset, force_refresh=True)
+                else:
+                    self._log("Nenhum ativo disponível no momento", "ERROR")
+                    return None, None
         
         # Mapear configuração manual 'turbo' para 'digital'
         tipo = getattr(self.config, 'tipo', 'digital')

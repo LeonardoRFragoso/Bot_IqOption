@@ -733,8 +733,20 @@ class IQOptionAPI:
             
             # Verificar se os dados estão disponíveis
             if not profit:
-                self._log_message(f"Dados de profit não disponíveis para {asset}", "WARNING")
-                return result
+                self._log_message(f"Dados de profit não disponíveis para {asset} - tentando reconectar", "WARNING")
+                # Tentar reconectar quando dados não estão disponíveis
+                if self._attempt_reconnection():
+                    self._log_message("Reconexão bem-sucedida após falha de profit", "INFO")
+                    # Tentar novamente após reconexão
+                    try:
+                        with self._api_lock:
+                            if self.api:
+                                profit = self.api.get_all_profit()
+                                all_assets = self.api.get_all_open_time()
+                    except Exception:
+                        pass
+                if not profit:
+                    return result
             # Tratar open_time como opcional (pode estar indisponível/transiente)
             if not all_assets or not isinstance(all_assets, dict):
                 all_assets = {}
