@@ -2,10 +2,11 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies - including libpq-dev for psycopg2
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip, setuptools and wheel FIRST - this is critical
@@ -13,7 +14,7 @@ RUN pip install --upgrade --force-reinstall pip setuptools wheel
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --force-reinstall -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project files
 COPY . .
