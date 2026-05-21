@@ -234,14 +234,14 @@ export function useTradingControl() {
       setLoading(true);
       setError(null);
       
-      // Get user profile to determine account type if not provided
+      // Get user profile to determine account type if not provided (default to REAL)
       let finalAccountType = accountType;
       if (!finalAccountType) {
         try {
           const user = await apiService.getCurrentUser();
-          finalAccountType = user.preferred_account_type || 'PRACTICE';
+          finalAccountType = user.preferred_account_type || 'REAL';
         } catch {
-          finalAccountType = 'PRACTICE';
+          finalAccountType = 'REAL';
         }
       }
       

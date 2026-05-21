@@ -157,7 +157,7 @@ class ApiService {
   }
 
   // Trading Control methods
-  async startTrading(strategy: string, asset: string = 'EURUSD', account_type: string = 'PRACTICE', strategyConfig?: any): Promise<TradingSession> {
+  async startTrading(strategy: string, asset: string = 'EURUSD', account_type: string = 'REAL', strategyConfig?: any): Promise<TradingSession> {
     const response: AxiosResponse<TradingSession> = await this.api.post('/trading/start/', { 
       strategy, 
       asset,
@@ -198,8 +198,9 @@ class ApiService {
     return this.getAssetCatalog();
   }
 
-  async runAssetCatalog(strategies: string[] = ['mhi', 'torres_gemeas', 'mhi_m5', 'rsi', 'moving_average', 'bollinger_bands', 'engulfing', 'candlestick', 'macd']): Promise<ApiResponse<unknown>> {
-    const response: AxiosResponse<ApiResponse<unknown>> = await this.api.post('/trading/catalog/', { strategies });
+  async runAssetCatalog(strategies: string[] = ['mhi', 'torres_gemeas', 'mhi_m5'], accountType: string = 'REAL'): Promise<ApiResponse<unknown>> {
+    // Apenas estratégias principais para catalogação (RSI, Bollinger, MACD, etc. são filtros de confirmação)
+    const response: AxiosResponse<ApiResponse<unknown>> = await this.api.post('/trading/catalog/', { strategies, account_type: accountType });
     return response.data;
   }
 
@@ -252,7 +253,7 @@ class ApiService {
   }
 
   // Payouts methods
-  async getPayouts(assets: string[], account_type: string = 'PRACTICE'):
+  async getPayouts(assets: string[], account_type: string = 'REAL'):
     Promise<Array<{ asset: string; binary: number; turbo: number; digital: number }>> {
     const response: AxiosResponse<{ payouts: Array<{ asset: string; binary: number; turbo: number; digital: number }> }> =
       await this.api.post('/trading/payouts/', { assets, account_type });
@@ -319,6 +320,97 @@ class ApiService {
 
   async clearAllNotifications(): Promise<any> {
     const response: AxiosResponse<any> = await this.api.delete('/auth/notifications/clear-all/');
+    return response.data;
+  }
+
+  // ============================================
+  // ADVANCED ANALYSIS METHODS
+  // ============================================
+
+  async getBestAssets(params?: {
+    min_win_rate?: number;
+    min_gale1_rate?: number;
+    max_results?: number;
+    check_trend?: boolean;
+  }): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.get('/trading/analysis/best-assets/', { params });
+    return response.data;
+  }
+
+  async getMultiTimeframeAnalysis(asset: string, timeframes?: string): Promise<any> {
+    const params = { asset, timeframes: timeframes || '60,300' };
+    const response: AxiosResponse<any> = await this.api.get('/trading/analysis/multi-timeframe/', { params });
+    return response.data;
+  }
+
+  async getTradingSchedule(asset?: string): Promise<any> {
+    const params = asset ? { asset } : {};
+    const response: AxiosResponse<any> = await this.api.get('/trading/analysis/schedule/', { params });
+    return response.data;
+  }
+
+  async getCorrelationStatus(asset?: string): Promise<any> {
+    const params = asset ? { asset } : {};
+    const response: AxiosResponse<any> = await this.api.get('/trading/analysis/correlation/', { params });
+    return response.data;
+  }
+
+  // Safety & Controls
+  async getLossTrackerStatus(): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.get('/trading/safety/loss-tracker/');
+    return response.data;
+  }
+
+  async resetLossTracker(): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.post('/trading/safety/loss-tracker/reset/');
+    return response.data;
+  }
+
+  async getBlacklist(): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.get('/trading/safety/blacklist/');
+    return response.data;
+  }
+
+  async addToBlacklist(asset: string, temporary?: boolean, duration_minutes?: number): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.post('/trading/safety/blacklist/', {
+      asset,
+      temporary: temporary || false,
+      duration_minutes: duration_minutes || 60
+    });
+    return response.data;
+  }
+
+  async removeFromBlacklist(asset: string): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.delete('/trading/safety/blacklist/', {
+      data: { asset }
+    });
+    return response.data;
+  }
+
+  // Performance Statistics
+  async getStrategyPerformance(days?: number): Promise<any> {
+    const params = days ? { days } : {};
+    const response: AxiosResponse<any> = await this.api.get('/trading/performance/strategies/', { params });
+    return response.data;
+  }
+
+  async getDailyPerformance(days?: number): Promise<any> {
+    const params = days ? { days } : {};
+    const response: AxiosResponse<any> = await this.api.get('/trading/performance/daily/', { params });
+    return response.data;
+  }
+
+  // Catalog with filters
+  async getCatalogFiltered(params?: {
+    min_win_rate?: number;
+    min_gale1_rate?: number;
+    min_samples?: number;
+    strategy?: string;
+    trend?: string;
+    sort_by?: string;
+    order?: string;
+  }): Promise<any> {
+    const response: AxiosResponse<any> = await this.api.get('/trading/catalog/filtered/', { params });
     return response.data;
   }
 

@@ -69,6 +69,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+        extra_kwargs = {
+            'username': {'required': False},
+            'email': {'required': False},
+            'first_name': {'required': False},
+            'last_name': {'required': False},
+            'phone': {'required': False},
+            'preferred_account_type': {'required': False},
+            'is_active_trader': {'required': False},
+        }
 
 
 class IQOptionCredentialsSerializer(serializers.Serializer):
@@ -94,7 +103,9 @@ class TradingConfigurationSerializer(serializers.ModelSerializer):
     class Meta:
         model = TradingConfiguration
         fields = (
-            'id', 'tipo', 'valor_entrada', 'stop_win', 'stop_loss', 
+            'id', 'tipo', 'valor_entrada', 'stop_win', 'stop_loss',
+            # Stop por Placar
+            'stop_por_placar', 'placar_stop_win', 'placar_stop_loss',
             'analise_medias', 'velas_medias', 'tipo_par',
             'martingale_usar', 'martingale_niveis', 'martingale_fator',
             'soros_usar', 'soros_niveis', 'default_strategy',
@@ -104,6 +115,18 @@ class TradingConfigurationSerializer(serializers.ModelSerializer):
             'torres_event_driven', 'torres_event_cooldown_sec',
             'torres_timeframe', 'torres_lookback',
             'torres_tolerancia_pct', 'torres_break_buffer_pct',
+            # Advanced Trading Settings
+            'auto_select_asset', 'min_win_rate_filter', 'min_gale1_rate_filter',
+            # Safety Settings
+            'max_consecutive_losses', 'daily_loss_limit',
+            # Trading Schedule
+            'use_trading_schedule', 'trading_start_hour', 'trading_end_hour',
+            # Multi-timeframe Settings
+            'use_multi_timeframe', 'mtf_timeframes',
+            # Correlation Settings
+            'check_correlation', 'max_correlated_positions',
+            # Blacklist
+            'asset_blacklist',
             'created_at', 'updated_at'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')

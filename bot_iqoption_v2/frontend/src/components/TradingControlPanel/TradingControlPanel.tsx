@@ -54,27 +54,88 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
 
   // Trading control functions will use apiService directly
 
-  // Load real data from API
+  // Poll for catalog completion
+  const waitForCatalogCompletionRef = React.useRef<() => Promise<void>>(undefined);
+  waitForCatalogCompletionRef.current = async () => {
+    const maxWaitTime = 300000; // 5 minutes max
+    const pollInterval = 3000; // 3s for responsive UX
+    const start = Date.now();
+    while (Date.now() - start < maxWaitTime) {
+      try {
+        const status = await apiService.getCatalogStatus();
+        if (status && status.running === false) {
+          setIsAnalyzing(false);
+          try { window.dispatchEvent(new CustomEvent('catalog-stopped')); } catch {}
+          try { window.dispatchEvent(new CustomEvent('catalog-completed')); } catch {}
+          await loadAssetsAndStrategies(true);
+          setTimeout(() => { loadAssetsAndStrategies(false).catch(() => {}); }, 500);
+          break;
+        }
+      } catch (e) {
+        console.warn('catalog status check failed:', e);
+      }
+      await new Promise(r => setTimeout(r, pollInterval));
+    }
+  };
+
+  // Check catalog status on mount and sync with backend
+  const checkCatalogStatus = async () => {
+    try {
+      const status = await apiService.getCatalogStatus();
+      if (status && status.running === true) {
+        setIsAnalyzing(true);
+        // Start polling for completion
+        waitForCatalogCompletionRef.current?.();
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // Load real data from API and sync with active session
   useEffect(() => {
-    loadAssetsAndStrategies();
-    // Sync with backend session state on mount
     (async () => {
+      // First, load assets and strategies
+      await loadAssetsAndStrategies();
+      checkCatalogStatus();
+      
+      // Then sync with backend session state (WITHOUT auto-pausing)
       try {
         const active = await apiService.getActiveSession();
         if (active) {
           setCurrentSession(active);
           const status = (active as any).status as string;
+          // Just reflect the real status - don't auto-pause
           if (status === 'RUNNING') {
-            // Safety-first: auto-pause any running session on login/dashboard load
-            try {
-              await apiService.pauseTrading((active as any).id.toString());
-              setTradingStatus('paused');
-            } catch {
-              // If pause fails, still reflect the real status
-              setTradingStatus('running');
-            }
+            setTradingStatus('running');
           } else if (status === 'PAUSED') {
             setTradingStatus('paused');
+          } else {
+            setTradingStatus('stopped');
+          }
+          
+          // Restore the asset and strategy from active session
+          const sessionAsset = (active as any).asset;
+          const sessionStrategy = (active as any).strategy;
+          if (sessionAsset) {
+            setSelectedAsset(sessionAsset);
+            // Ensure the session asset is in the assets list
+            setAssets(prev => {
+              if (!prev.find(a => a.id === sessionAsset)) {
+                return [...prev, { id: sessionAsset, name: sessionAsset, payout: 80, isOpen: true }];
+              }
+              return prev;
+            });
+          }
+          if (sessionStrategy) {
+            setSelectedStrategy(sessionStrategy);
+            // Ensure the session strategy is in the strategies list
+            setStrategies(prev => {
+              if (!prev.find(s => s.id === sessionStrategy)) {
+                return [...prev, { id: sessionStrategy, name: sessionStrategy, description: sessionStrategy }];
+              }
+              return prev;
+            });
           }
         } else {
           setTradingStatus('stopped');
@@ -132,44 +193,127 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
         return map;
       });
     };
+    
+    // Listen for session updates (stop win/loss)
+    const onSessionUpdate = (msg: any) => {
+      const data = msg?.data || {};
+      if (data && data.status) {
+        const status = String(data.status).toUpperCase();
+        if (status === 'STOPPED' || status === 'ERROR') {
+          console.log('[TradingControlPanel] Session stopped via WS:', status);
+          setTradingStatus('stopped');
+          setCurrentSession(null);
+          onSessionChange?.(null);
+        } else if (status === 'RUNNING') {
+          setTradingStatus('running');
+        } else if (status === 'PAUSED') {
+          setTradingStatus('paused');
+        }
+      }
+    };
+    
     socket.on('operation_update', onOpUpdate);
+    socket.on('session_update', onSessionUpdate);
     return () => {
       socket.off('operation_update', onOpUpdate);
+      socket.off('session_update', onSessionUpdate);
     };
-  }, [socket, currentSession?.id]);
+  }, [socket, currentSession?.id, onSessionChange]);
+
+  // Fallback polling: check session status every 5s when running
+  // This catches stop win/loss even if WebSocket misses the event
+  useEffect(() => {
+    if (tradingStatus !== 'running') return;
+    
+    const checkSessionStatus = async () => {
+      try {
+        const active = await apiService.getActiveSession();
+        if (!active) {
+          // Session ended (stop win/loss or manual stop)
+          console.log('[TradingControlPanel] Session ended via polling');
+          setTradingStatus('stopped');
+          setCurrentSession(null);
+          onSessionChange?.(null);
+        } else {
+          const status = String((active as any).status || '').toUpperCase();
+          if (status === 'STOPPED' || status === 'ERROR') {
+            console.log('[TradingControlPanel] Session stopped via polling:', status);
+            setTradingStatus('stopped');
+            setCurrentSession(null);
+            onSessionChange?.(null);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+    
+    const interval = setInterval(checkSessionStatus, 5000);
+    return () => clearInterval(interval);
+  }, [tradingStatus, onSessionChange]);
 
   const loadAssetsAndStrategies = async (lightMode: boolean = false) => {
     try {
-      // Load real asset catalog results
-      const catalogResults = await apiService.getAssetCatalog();
+      // Use getBestAssets() for consistency with Trading page
+      // This ensures Dashboard and Trading show the same recommended assets
+      let realAssets: Asset[] = [];
       
-      // 1) Deduplicate by asset symbol: keep the best score per asset
-      const bestByAsset = new Map<string, any>();
-      for (const r of catalogResults) {
-        const key = r.asset;
-        const score = Number(r.gale2_rate ?? r.win_rate ?? 0);
-        const current = bestByAsset.get(key);
-        if (!current) {
-          bestByAsset.set(key, r);
-        } else {
-          const curScore = Number(current.gale2_rate ?? current.win_rate ?? 0);
-          if (score > curScore) bestByAsset.set(key, r);
+      try {
+        const bestAssetsResponse = await apiService.getBestAssets({
+          min_win_rate: 55,
+          min_gale1_rate: 70,
+          max_results: 25,
+        });
+        
+        if (bestAssetsResponse?.assets && Array.isArray(bestAssetsResponse.assets)) {
+          realAssets = bestAssetsResponse.assets.map((result: any) => ({
+            id: result.asset,
+            name: result.asset,
+            payout: 80,
+            isOpen: true,
+            winRate: Math.round(parseFloat(String(result.gale1_rate || result.win_rate || 0))),
+            strategy: result.strategy,
+            score: parseFloat(String(result.score || 0)),
+            isRecommended: result.is_recommended || false,
+          }));
         }
+      } catch (err) {
+        console.warn('Could not fetch best assets, falling back to catalog:', err);
       }
-      const uniqueResults = Array.from(bestByAsset.values());
+      
+      // Fallback to catalog results if getBestAssets() returns empty
+      if (realAssets.length === 0) {
+        const catalogResults = await apiService.getAssetCatalog();
+        
+        // Deduplicate by asset symbol: keep the best score per asset
+        const bestByAsset = new Map<string, any>();
+        for (const r of catalogResults) {
+          const key = r.asset;
+          const gale2 = parseFloat(String(r.gale2_rate || 0));
+          const winRate = parseFloat(String(r.win_rate || 0));
+          const score = gale2 || winRate || 0;
+          const current = bestByAsset.get(key);
+          if (!current) {
+            bestByAsset.set(key, { ...r, _score: score });
+          } else {
+            const curScore = current._score || 0;
+            if (score > curScore) bestByAsset.set(key, { ...r, _score: score });
+          }
+        }
+        const uniqueResults = Array.from(bestByAsset.values());
 
-      // 2) Transform to Asset format (filter to FX-like symbols and their OTC variants)
-      const fxRegex = /^[A-Z]{3,6}(-OTC)?$/; // e.g., EURUSD, AUDCAD-OTC
-      const realAssets: Asset[] = uniqueResults
-        .filter((r: any) => typeof r.asset === 'string' && fxRegex.test(r.asset))
-        .map((result: any) => ({
-          id: result.asset,
-          name: result.asset,
-          payout: result.payout || 80, // Default payout if not available
-          isOpen: true, // Assume open if in catalog
-          // Keep winRate only for internal default selection (hidden in UI to avoid confusion)
-          winRate: Math.round(result.gale2_rate || result.win_rate || 0)
-        }));
+        // Transform to Asset format
+        const fxRegex = /^[A-Z]{3,6}(-OTC)?$/;
+        realAssets = uniqueResults
+          .filter((r: any) => typeof r.asset === 'string' && fxRegex.test(r.asset))
+          .map((result: any) => ({
+            id: result.asset,
+            name: result.asset,
+            payout: parseFloat(String(result.payout || 0)) || 80,
+            isOpen: true,
+            winRate: Math.round(parseFloat(String(result.gale2_rate || result.win_rate || 0)))
+          }));
+      }
 
       // Get market status for additional asset info (skip on light mode)
       if (!lightMode) {
@@ -211,70 +355,111 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
           const strategyStats: { [key: string]: { total: number, count: number } } = {};
           
           catalogResponse.forEach((result: any) => {
-            if (result.strategy && result.gale3_rate !== null && result.gale3_rate !== undefined) {
-              if (!strategyStats[result.strategy]) {
-                strategyStats[result.strategy] = { total: 0, count: 0 };
+            if (result.strategy) {
+              // Parse gale3_rate as float (backend sends Decimal as string)
+              const gale3 = parseFloat(String(result.gale3_rate || 0));
+              if (gale3 > 0) {
+                if (!strategyStats[result.strategy]) {
+                  strategyStats[result.strategy] = { total: 0, count: 0 };
+                }
+                strategyStats[result.strategy].total += gale3;
+                strategyStats[result.strategy].count += 1;
               }
-              strategyStats[result.strategy].total += result.gale3_rate;
-              strategyStats[result.strategy].count += 1;
             }
           });
 
           // Calculate averages
           Object.keys(strategyStats).forEach(strategy => {
             const stats = strategyStats[strategy];
-            strategyPerformance[strategy] = Math.round(stats.total / stats.count);
+            if (stats.count > 0) {
+              strategyPerformance[strategy] = Math.round(stats.total / stats.count);
+            }
           });
         }
       } catch (err) {
         console.warn('Could not fetch catalog results for strategy performance:', err);
       }
 
-      // Define strategies with real performance data when available
+      // Define strategies with real performance data when available (NO fallback values)
       const strategies: Strategy[] = [
         { 
           id: 'mhi', 
           name: 'MHI', 
           description: 'Média Móvel com Indicadores', 
-          winRate: strategyPerformance['mhi'] || 73,
-          recommended: true 
+          winRate: strategyPerformance['mhi'] || undefined,
+          recommended: (strategyPerformance['mhi'] || 0) >= 70 
         },
         { 
           id: 'torres_gemeas', 
           name: 'Torres Gêmeas', 
           description: 'Estratégia de Reversão', 
-          winRate: strategyPerformance['torres_gemeas'] || 68,
-          recommended: false 
+          winRate: strategyPerformance['torres_gemeas'] || undefined,
+          recommended: (strategyPerformance['torres_gemeas'] || 0) >= 70 
         },
         { 
           id: 'mhi_m5', 
           name: 'MHI M5', 
           description: 'MHI para timeframe de 5 minutos', 
-          winRate: strategyPerformance['mhi_m5'] || 71,
-          recommended: true 
+          winRate: strategyPerformance['mhi_m5'] || undefined,
+          recommended: (strategyPerformance['mhi_m5'] || 0) >= 70 
+        },
+        { 
+          id: 'rsi', 
+          name: 'RSI', 
+          description: 'Índice de Força Relativa', 
+          winRate: strategyPerformance['rsi'] || undefined,
+          recommended: (strategyPerformance['rsi'] || 0) >= 70 
+        },
+        { 
+          id: 'bollinger_bands', 
+          name: 'Bollinger Bands', 
+          description: 'Bandas de Bollinger', 
+          winRate: strategyPerformance['bollinger_bands'] || undefined,
+          recommended: (strategyPerformance['bollinger_bands'] || 0) >= 70 
+        },
+        { 
+          id: 'macd', 
+          name: 'MACD', 
+          description: 'Moving Average Convergence Divergence', 
+          winRate: strategyPerformance['macd'] || undefined,
+          recommended: (strategyPerformance['macd'] || 0) >= 70 
         },
       ];
 
       // Use real data if available, otherwise fallback to defaults
       if (realAssets.length > 0) {
-        // 3) Sort assets: open first, then higher payout, then alphabetical
+        // Cap winRate at 100% (fix any data issues)
+        realAssets.forEach(a => {
+          if (a.winRate && a.winRate > 100) a.winRate = 100;
+        });
+        
+        // 3) Sort assets: by winRate (best first), then open status, then alphabetical
         realAssets.sort((a, b) => {
+          // First: sort by winRate (higher is better)
+          const winRateScore = (b.winRate || 0) - (a.winRate || 0);
+          if (winRateScore !== 0) return winRateScore;
+          // Then: open assets first
           const openScore = (b.isOpen ? 1 : 0) - (a.isOpen ? 1 : 0);
           if (openScore !== 0) return openScore;
-          const payoutScore = (b.payout || 0) - (a.payout || 0);
-          if (payoutScore !== 0) return payoutScore;
+          // Finally: alphabetical
           return a.id.localeCompare(b.id);
         });
 
-        setAssets(realAssets);
+        // Filter: only show assets with winRate > 0 (cataloged) at the top
+        // Keep others at the end for manual selection if needed
+        const catalogedAssets = realAssets.filter(a => (a.winRate || 0) > 0);
+        const uncatalogedAssets = realAssets.filter(a => (a.winRate || 0) === 0);
+        const sortedAssets = [...catalogedAssets, ...uncatalogedAssets];
+
+        setAssets(sortedAssets);
         
         // Prefer the best open asset; if none, pick the overall best by winRate
-        let bestAsset = realAssets
-          .filter(a => a.isOpen)
+        let bestAsset = sortedAssets
+          .filter(a => a.isOpen && (a.winRate || 0) >= 60)
           .sort((a, b) => (b.winRate || 0) - (a.winRate || 0))[0];
 
         if (!bestAsset) {
-          bestAsset = [...realAssets].sort((a, b) => (b.winRate || 0) - (a.winRate || 0))[0];
+          bestAsset = [...sortedAssets].sort((a, b) => (b.winRate || 0) - (a.winRate || 0))[0];
         }
         
         if (bestAsset) setSelectedAsset(bestAsset.id);
@@ -308,9 +493,9 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       ];
       
       const fallbackStrategies: Strategy[] = [
-        { id: 'mhi', name: 'MHI', description: 'Média Móvel com Indicadores', recommended: true, winRate: 72 },
-        { id: 'torres_gemeas', name: 'Torres Gêmeas', description: 'Estratégia de Reversão', recommended: false, winRate: 68 },
-        { id: 'mhi_m5', name: 'MHI M5', description: 'MHI para timeframe de 5 minutos', recommended: true, winRate: 71 },
+        { id: 'mhi', name: 'MHI', description: 'Média Móvel com Indicadores', recommended: false },
+        { id: 'torres_gemeas', name: 'Torres Gêmeas', description: 'Estratégia de Reversão', recommended: false },
+        { id: 'mhi_m5', name: 'MHI M5', description: 'MHI para timeframe de 5 minutos', recommended: false },
       ];
       
       setAssets(fallbackAssets);
@@ -360,13 +545,17 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
         // ignore
       }
 
-      // Fetch preferred account type and send explicitly
-      let accountType = 'PRACTICE';
+      // Fetch preferred account type and send explicitly (default to REAL)
+      let accountType = 'REAL';
       try {
         const user: any = await apiService.getCurrentUser();
-        accountType = (user && (user as any).preferred_account_type) || 'PRACTICE';
-      } catch {
-        accountType = 'PRACTICE';
+        if (user && user.preferred_account_type) {
+          accountType = user.preferred_account_type;
+        }
+        console.log('[Trading] Usando conta:', accountType);
+      } catch (err) {
+        console.warn('[Trading] Falha ao obter tipo de conta, usando REAL:', err);
+        accountType = 'REAL';
       }
 
       const session = await apiService.startTrading(selectedStrategy, selectedAsset, accountType, strategyConfig);
@@ -428,18 +617,21 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
       // ignore
     }
     try {
-      await apiService.runAssetCatalog(['mhi', 'torres_gemeas', 'mhi_m5']);
+      // Get user's preferred account type
+      let accountType = 'REAL';
+      try {
+        const user: any = await apiService.getCurrentUser();
+        accountType = (user && user.preferred_account_type) || 'REAL';
+      } catch {
+        // Use REAL as default
+      }
+      // Catalogar apenas estratégias principais (RSI, Bollinger, etc. são filtros de confirmação)
+      await apiService.runAssetCatalog(['mhi', 'torres_gemeas', 'mhi_m5'], accountType);
       
-      // Poll for completion instead of fixed timeout
-      await waitForCatalogCompletion();
-
-      // Catalog finished: libera UI imediatamente e faz refresh leve
-      setIsAnalyzing(false);
-      try { window.dispatchEvent(new CustomEvent('catalog-stopped')); } catch {}
-      await loadAssetsAndStrategies(true); // light refresh (sem status/payouts)
-
-      // Agendar refresh completo em background (payouts e status de mercado)
-      setTimeout(() => { loadAssetsAndStrategies(false).catch(() => {}); }, 500);
+      // Poll for completion using the ref
+      if (waitForCatalogCompletionRef.current) {
+        await waitForCatalogCompletionRef.current();
+      }
       
     } catch (error) {
       console.error('Failed to analyze assets:', error);
@@ -451,27 +643,6 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
         }
         return false;
       });
-    }
-  };
-
-  const waitForCatalogCompletion = async () => {
-    const maxWaitTime = 300000; // 5 minutes max
-    const pollInterval = 3000; // 3s for responsive UX
-    const start = Date.now();
-    while (Date.now() - start < maxWaitTime) {
-      try {
-        const status = await apiService.getCatalogStatus();
-        if (status && status.running === false) {
-          try {
-            window.dispatchEvent(new CustomEvent('catalog-completed'));
-          } catch {}
-          break;
-        }
-      } catch (e) {
-        console.warn('catalog status check failed:', e);
-        // fall through to wait and retry
-      }
-      await new Promise(r => setTimeout(r, pollInterval));
     }
   };
 
@@ -509,9 +680,82 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
 
         {tradingStatus === 'running' && (
           <Box sx={{ mb: 3 }}>
-            <Typography variant="body2" sx={{ color: '#B0B0B0', mb: 1 }}>
-              Sessão em andamento
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Typography variant="body2" sx={{ color: '#B0B0B0' }}>
+                Sessão em andamento
+              </Typography>
+              {/* Placar atual - conta séries (entrada + gales), não operações individuais */}
+              {(() => {
+                const ops = Array.from(liveOps.values());
+                // WIN: qualquer operação WIN na série conta como 1 vitória
+                // LOSS: apenas quando a entrada E todos os gales perdem
+                
+                // Identificar entradas: martingale_level === 0 OU operation_type === 'ENTRY'
+                const entries = ops.filter(op => {
+                  const opType = (op.operation_type || '').toUpperCase();
+                  return opType === 'ENTRY' || op.martingale_level === 0;
+                });
+                
+                let wins = 0;
+                let losses = 0;
+                const processedEntries = new Set<string>();
+                
+                entries.forEach(entry => {
+                  // Criar chave única para esta entrada
+                  const entryKey = `${entry.id}`;
+                  
+                  // Evitar processar a mesma entrada duas vezes
+                  if (processedEntries.has(entryKey)) return;
+                  processedEntries.add(entryKey);
+                  
+                  const entryTime = new Date(entry.created_at).getTime();
+                  
+                  // Encontrar todas as operações desta série (mesmo ativo, até 5 minutos após)
+                  const seriesOps = ops.filter(op => {
+                    const opTime = new Date(op.created_at).getTime();
+                    return op.asset === entry.asset && opTime >= entryTime && opTime <= entryTime + 300000;
+                  });
+                  
+                  // Se qualquer operação da série ganhou, é WIN
+                  const hasWin = seriesOps.some(op => op.result?.toLowerCase() === 'win');
+                  // Se todas terminaram e nenhuma ganhou, é LOSS
+                  const allClosed = seriesOps.every(op => {
+                    const r = op.result?.toLowerCase();
+                    return r && r !== 'pending';
+                  });
+                  const allLost = seriesOps.length > 0 && seriesOps.every(op => {
+                    const r = op.result?.toLowerCase();
+                    return r === 'loss' || r === 'draw';
+                  });
+                  
+                  if (hasWin) {
+                    wins++;
+                  } else if (allClosed && allLost) {
+                    losses++;
+                  }
+                });
+                
+                const diff = wins - losses;
+                return (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2" sx={{ 
+                      color: diff > 0 ? '#4CAF50' : diff < 0 ? '#F44336' : '#B0B0B0',
+                      fontWeight: 'bold'
+                    }}>
+                      Placar: {wins}x{losses}
+                    </Typography>
+                    {diff !== 0 && (
+                      <Chip 
+                        label={diff > 0 ? `+${diff}` : `${diff}`}
+                        size="small"
+                        color={diff > 0 ? 'success' : 'error'}
+                        sx={{ minWidth: 40 }}
+                      />
+                    )}
+                  </Box>
+                );
+              })()}
+            </Box>
             <LinearProgress 
               variant="indeterminate" 
               sx={{ 
@@ -587,35 +831,36 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
                   },
                 }}
               >
-                {assets.map((asset) => (
-                  <MenuItem key={asset.id} value={asset.id}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                      <Typography sx={{ flexGrow: 1 }}>{asset.name}</Typography>
-                      <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Chip 
-                          label={`${asset.payout}%`} 
-                          size="small" 
-                          color="info"
-                        />
-                        {asset.id.endsWith('-OTC') && (
-                          <Chip 
-                            label="OTC" 
-                            size="small" 
-                            color="secondary"
-                            variant="outlined"
-                          />
-                        )}
-                        {!asset.isOpen && (
-                          <Chip 
-                            label="Fechado" 
-                            size="small" 
-                            color="error"
-                          />
-                        )}
-                      </Box>
-                    </Box>
-                  </MenuItem>
-                ))}
+                {assets
+                  .filter(asset => asset.winRate !== undefined && asset.winRate !== null && asset.winRate > 0) // Only show assets with valid winRate
+                  .sort((a, b) => (b.winRate || 0) - (a.winRate || 0)) // Sort by winRate descending
+                  .map((asset) => {
+                    const rate = asset.winRate || 0;
+                    return (
+                      <MenuItem key={asset.id} value={asset.id}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                          <Typography sx={{ flexGrow: 1 }}>{asset.name}</Typography>
+                          <Box sx={{ display: 'flex', gap: 1 }}>
+                            {rate > 0 && (
+                              <Chip 
+                                label={`${rate}%`} 
+                                size="small" 
+                                color={rate >= 70 ? 'success' : rate >= 60 ? 'warning' : 'error'}
+                              />
+                            )}
+                            {asset.id.endsWith('-OTC') && (
+                              <Chip 
+                                label="OTC" 
+                                size="small" 
+                                color="secondary"
+                                variant="outlined"
+                              />
+                            )}
+                          </Box>
+                        </Box>
+                      </MenuItem>
+                    );
+                  })}
               </Select>
             </FormControl>
           </Box>
@@ -703,10 +948,16 @@ const TradingControlPanel: React.FC<TradingControlPanelProps> = ({ onSessionChan
           >
             <Typography variant="body2">
               <strong>{selectedAssetData.name}</strong> com estratégia <strong>{selectedStrategyData.name}</strong>
-              {selectedAssetData.winRate && selectedStrategyData.winRate && (
-                <span> - Taxa de acerto estimada: <strong style={{ color: '#00E676' }}>
-                  {Math.round((selectedAssetData.winRate + selectedStrategyData.winRate) / 2)}%
+              {selectedAssetData.winRate ? (
+                <span> - Taxa de acerto (catalogação): <strong style={{ color: '#00E676' }}>
+                  {selectedAssetData.winRate}%
                 </strong></span>
+              ) : selectedStrategyData.winRate ? (
+                <span> - Taxa média da estratégia: <strong style={{ color: '#00E676' }}>
+                  {selectedStrategyData.winRate}%
+                </strong></span>
+              ) : (
+                <span style={{ color: '#FFA000' }}> - Execute a catalogação para ver taxas de acerto</span>
               )}
             </Typography>
           </Alert>

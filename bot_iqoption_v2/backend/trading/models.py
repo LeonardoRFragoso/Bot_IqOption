@@ -24,7 +24,7 @@ class TradingSession(models.Model):
     account_type = models.CharField(
         max_length=10,
         choices=[('PRACTICE', 'Demo'), ('REAL', 'Real')],
-        default='PRACTICE'
+        default='REAL'
     )
     
     # Financial tracking
@@ -119,6 +119,12 @@ class Operation(models.Model):
 class AssetCatalog(models.Model):
     """Model to store asset analysis results"""
     
+    TREND_CHOICES = [
+        ('UP', 'Alta'),
+        ('DOWN', 'Baixa'),
+        ('SIDEWAYS', 'Lateral'),
+    ]
+    
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='asset_catalogs')
     
     # Asset info
@@ -134,16 +140,32 @@ class AssetCatalog(models.Model):
     # Sample size
     total_samples = models.IntegerField(default=0)
     
+    # Enhanced analysis fields
+    trend = models.CharField(max_length=10, choices=TREND_CHOICES, default='SIDEWAYS')
+    trend_strength = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    score = models.DecimalField(max_digits=6, decimal_places=2, default=0, help_text="Composite score for ranking")
+    
+    # Multi-timeframe data (JSON)
+    mtf_analysis = models.JSONField(default=dict, blank=True, help_text="Multi-timeframe analysis data")
+    
+    # Payout info
+    payout = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    
     # Timestamps
-    analyzed_at = models.DateTimeField(auto_now_add=True)
+    analyzed_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'trading_asset_catalog'
         unique_together = ['user', 'asset', 'strategy']
-        ordering = ['-win_rate']
+        ordering = ['-score', '-win_rate']
     
     def __str__(self):
         return f"{self.asset} - {self.strategy} - {self.win_rate}%"
+    
+    @property
+    def is_recommended(self):
+        """Check if this asset is recommended for trading"""
+        return float(self.win_rate) >= 60 and float(self.gale1_rate) >= 75
 
 
 class MarketData(models.Model):

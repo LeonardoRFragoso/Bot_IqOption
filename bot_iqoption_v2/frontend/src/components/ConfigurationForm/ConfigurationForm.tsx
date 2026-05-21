@@ -184,6 +184,7 @@ const ConfigurationForm: React.FC = () => {
                   onChange={handleTextFieldChange('stop_win')}
                   inputProps={{ step: 1, min: 1 }}
                   helperText="Lucro máximo antes de parar"
+                  disabled={formData.stop_por_placar}
                 />
               </Box>
 
@@ -196,9 +197,63 @@ const ConfigurationForm: React.FC = () => {
                   onChange={handleTextFieldChange('stop_loss')}
                   inputProps={{ step: 1, min: 1 }}
                   helperText="Perda máxima antes de parar"
+                  disabled={formData.stop_por_placar}
                 />
               </Box>
             </Box>
+
+            {/* Stop por Placar */}
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 'bold' }}>
+              Stop por Placar
+            </Typography>
+            
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
+              <Box sx={{ flex: '1 1 300px', minWidth: '250px' }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.stop_por_placar || false}
+                      onChange={handleSwitchChange('stop_por_placar')}
+                    />
+                  }
+                  label="Usar Stop por Placar"
+                />
+                <Typography variant="caption" color="textSecondary" display="block">
+                  Quando ativado, o stop é baseado na diferença de acertos/erros
+                </Typography>
+              </Box>
+            </Box>
+
+            {formData.stop_por_placar && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, mt: 2 }}>
+                <Box sx={{ flex: '1 1 300px', minWidth: '250px' }}>
+                  <TextField
+                    fullWidth
+                    label="Placar Stop Win"
+                    type="number"
+                    value={formData.placar_stop_win || 3}
+                    onChange={handleTextFieldChange('placar_stop_win')}
+                    inputProps={{ step: 1, min: 1, max: 10 }}
+                    helperText="Ex: 3 = para em 3x0, 4x1, 5x2... (com lucro)"
+                  />
+                </Box>
+
+                <Box sx={{ flex: '1 1 300px', minWidth: '250px' }}>
+                  <TextField
+                    fullWidth
+                    label="Placar Stop Loss"
+                    type="number"
+                    value={formData.placar_stop_loss || 3}
+                    onChange={handleTextFieldChange('placar_stop_loss')}
+                    inputProps={{ step: 1, min: 1, max: 10 }}
+                    helperText="Ex: 3 = para em 0x3, 1x4, 2x5... (com prejuízo)"
+                  />
+                </Box>
+              </Box>
+            )}
+
+            <Divider sx={{ my: 2 }} />
 
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
               <Box sx={{ flex: '1 1 300px', minWidth: '250px' }}>

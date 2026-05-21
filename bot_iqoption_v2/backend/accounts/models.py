@@ -235,6 +235,21 @@ class TradingConfiguration(models.Model):
         default=70.00,
         help_text="Stop Loss"
     )
+    
+    # Stop por Placar (Score-based Stop)
+    stop_por_placar = models.BooleanField(
+        default=False,
+        help_text="Usar stop por placar em vez de valor monetário"
+    )
+    placar_stop_win = models.IntegerField(
+        default=3,
+        help_text="Diferença de acertos para Stop Win (ex: 3 = 3x0, 4x1, 5x2...)"
+    )
+    placar_stop_loss = models.IntegerField(
+        default=3,
+        help_text="Diferença de erros para Stop Loss (ex: 3 = 0x3, 1x4, 2x5...)"
+    )
+    
     analise_medias = models.BooleanField(
         default=False,
         help_text="Análise de médias (N=False, S=True)"
@@ -454,6 +469,78 @@ class TradingConfiguration(models.Model):
         decimal_places=8,
         default=0.00001000,
         help_text="Threshold mínimo do histograma"
+    )
+    
+    # Advanced Trading Settings
+    auto_select_asset = models.BooleanField(
+        default=False,
+        help_text="Selecionar automaticamente o melhor ativo do catálogo"
+    )
+    min_win_rate_filter = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=60.00,
+        help_text="Taxa mínima de acerto para filtrar ativos (%)"
+    )
+    min_gale1_rate_filter = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=75.00,
+        help_text="Taxa mínima de Gale1 para filtrar ativos (%)"
+    )
+    
+    # Safety Settings
+    max_consecutive_losses = models.IntegerField(
+        default=3,
+        help_text="Parar após X perdas consecutivas"
+    )
+    daily_loss_limit = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=100.00,
+        help_text="Limite de perda diária"
+    )
+    
+    # Trading Schedule
+    use_trading_schedule = models.BooleanField(
+        default=False,
+        help_text="Usar horários de operação recomendados"
+    )
+    trading_start_hour = models.IntegerField(
+        default=9,
+        help_text="Hora de início das operações (UTC)"
+    )
+    trading_end_hour = models.IntegerField(
+        default=21,
+        help_text="Hora de fim das operações (UTC)"
+    )
+    
+    # Multi-timeframe Settings
+    use_multi_timeframe = models.BooleanField(
+        default=True,
+        help_text="Usar análise multi-timeframe para confirmação"
+    )
+    mtf_timeframes = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Timeframes para análise (em segundos)"
+    )
+    
+    # Correlation Settings
+    check_correlation = models.BooleanField(
+        default=True,
+        help_text="Verificar correlação entre ativos"
+    )
+    max_correlated_positions = models.IntegerField(
+        default=2,
+        help_text="Máximo de posições em ativos correlacionados"
+    )
+    
+    # Blacklist
+    asset_blacklist = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Lista de ativos bloqueados"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)

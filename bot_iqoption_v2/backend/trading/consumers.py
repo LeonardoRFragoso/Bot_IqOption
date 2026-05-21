@@ -1,8 +1,11 @@
 import json
 import asyncio
+import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from .models import TradingSession, Operation, TradingLog
+
+logger = logging.getLogger(__name__)
 
 
 class TradingConsumer(AsyncWebsocketConsumer):
@@ -30,11 +33,19 @@ class TradingConsumer(AsyncWebsocketConsumer):
     
     async def disconnect(self, close_code):
         if hasattr(self, 'user_group_name'):
-            # Leave user group
-            await self.channel_layer.group_discard(
-                self.user_group_name,
-                self.channel_name
-            )
+            try:
+                # Leave user group with timeout to avoid blocking
+                await asyncio.wait_for(
+                    self.channel_layer.group_discard(
+                        self.user_group_name,
+                        self.channel_name
+                    ),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                pass
     
     async def receive(self, text_data):
         """Handle messages from WebSocket"""
@@ -58,34 +69,44 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 'message': 'Invalid JSON format'
             }))
     
+    async def _safe_send(self, data: dict):
+        """Send data safely, catching closed connection errors"""
+        try:
+            await self.send(text_data=json.dumps(data))
+        except Exception:
+            pass
+    
     async def send_initial_data(self):
         """Send initial data when client connects"""
-        await self.send_status_update()
-        await self.send_recent_logs()
+        try:
+            await self.send_status_update()
+            await self.send_recent_logs()
+        except Exception:
+            pass
     
     async def send_status_update(self):
         """Send current trading status"""
         session_data = await self.get_active_session()
         recent_operations = await self.get_recent_operations()
         
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'status_update',
             'data': {
                 'active_session': session_data,
                 'recent_operations': recent_operations
             }
-        }))
+        })
     
     async def send_recent_logs(self):
         """Send recent trading logs"""
         logs = await self.get_recent_logs()
         
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'logs_update',
             'data': {
                 'logs': logs
             }
-        }))
+        })
     
     @database_sync_to_async
     def get_active_session(self):
@@ -168,31 +189,31 @@ class TradingConsumer(AsyncWebsocketConsumer):
     # Group message handlers
     async def trading_update(self, event):
         """Handle trading update from group"""
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'trading_update',
             'data': event['data']
-        }))
+        })
     
     async def operation_update(self, event):
         """Handle operation update from group"""
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'operation_update',
             'data': event['data']
-        }))
+        })
     
     async def log_update(self, event):
         """Handle log update from group"""
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'log_update',
             'data': event['data']
-        }))
+        })
     
     async def session_update(self, event):
         """Handle session update from group"""
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'session_update',
             'data': event['data']
-        }))
+        })
 
 
 class MonitoringConsumer(AsyncWebsocketConsumer):
@@ -217,11 +238,19 @@ class MonitoringConsumer(AsyncWebsocketConsumer):
     
     async def disconnect(self, close_code):
         if hasattr(self, 'monitoring_group_name'):
-            # Leave monitoring group
-            await self.channel_layer.group_discard(
-                self.monitoring_group_name,
-                self.channel_name
-            )
+            try:
+                # Leave monitoring group with timeout to avoid blocking
+                await asyncio.wait_for(
+                    self.channel_layer.group_discard(
+                        self.monitoring_group_name,
+                        self.channel_name
+                    ),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                pass
     
     async def receive(self, text_data):
         """Handle messages from WebSocket"""
@@ -244,6 +273,13 @@ class MonitoringConsumer(AsyncWebsocketConsumer):
                 'message': 'Invalid JSON format'
             }))
     
+    async def _safe_send(self, data: dict):
+        """Send data safely, catching closed connection errors"""
+        try:
+            await self.send(text_data=json.dumps(data))
+        except Exception:
+            pass
+    
     async def subscribe_to_asset(self, asset):
         """Subscribe to asset price updates"""
         asset_group_name = f"asset_{asset}"
@@ -253,36 +289,39 @@ class MonitoringConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'subscription_confirmed',
             'asset': asset
-        }))
+        })
     
     async def unsubscribe_from_asset(self, asset):
         """Unsubscribe from asset price updates"""
         asset_group_name = f"asset_{asset}"
         
-        await self.channel_layer.group_discard(
-            asset_group_name,
-            self.channel_name
-        )
+        try:
+            await self.channel_layer.group_discard(
+                asset_group_name,
+                self.channel_name
+            )
+        except Exception:
+            pass
         
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'unsubscription_confirmed',
             'asset': asset
-        }))
+        })
     
     # Group message handlers
     async def price_update(self, event):
         """Handle price update from group"""
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'price_update',
             'data': event['data']
-        }))
+        })
     
     async def market_update(self, event):
         """Handle market update from group"""
-        await self.send(text_data=json.dumps({
+        await self._safe_send({
             'type': 'market_update',
             'data': event['data']
-        }))
+        })

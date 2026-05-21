@@ -179,6 +179,7 @@ class AssetCatalogService:
                         while db_attempt < max_db_attempts and not saved:
                             try:
                                 from django.db import transaction
+                                from django.utils import timezone
                                 with transaction.atomic():
                                     catalog, created = AssetCatalog.objects.update_or_create(
                                         user=self.user,
@@ -189,7 +190,8 @@ class AssetCatalogService:
                                             'gale1_rate': analysis_result['gale1_rate'],
                                             'gale2_rate': analysis_result['gale2_rate'],
                                             'gale3_rate': analysis_result['gale3_rate'],
-                                            'total_samples': analysis_result['total_samples']
+                                            'total_samples': analysis_result['total_samples'],
+                                            'analyzed_at': timezone.now()
                                         }
                                     )
                                 saved = True
@@ -515,8 +517,10 @@ class AssetCatalogService:
                         ema12 = sum(recent_closes[-12:]) / 12
                         ema26 = sum(recent_closes) / 26
                         macd = ema12 - ema26
-                        prev_ema12 = sum([float(candles[j]['close']) for j in range(i-26, i-1)])[-12:] / 12
-                        prev_ema26 = sum([float(candles[j]['close']) for j in range(i-26, i-1)]) / 26
+                        # Previous MACD calculation
+                        prev_closes = [float(candles[j]['close']) for j in range(i-26, i)]
+                        prev_ema12 = sum(prev_closes[-12:]) / 12
+                        prev_ema26 = sum(prev_closes) / 26
                         prev_macd = prev_ema12 - prev_ema26
                         if macd > 0 and prev_macd <= 0:
                             signal = 'call'

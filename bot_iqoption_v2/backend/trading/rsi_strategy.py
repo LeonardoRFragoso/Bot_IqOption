@@ -59,11 +59,21 @@ class RSIStrategy:
         logger.info(f"[RSI] {message}")
     
     def _check_stop_conditions(self) -> bool:
-        """Check if stop win/loss conditions are met"""
+        """Check if stop win/loss conditions are met (monetary or score-based)"""
         try:
             total_pl = float(self.session.total_profit)
         except Exception:
             total_pl = 0.0
+        
+        use_score_stop = getattr(self.config, 'stop_por_placar', False)
+        
+        if use_score_stop:
+            return self._check_score_stop_conditions()
+        else:
+            return self._check_monetary_stop_conditions(total_pl)
+    
+    def _check_monetary_stop_conditions(self, total_pl: float) -> bool:
+        """Check monetary stop win/loss conditions"""
         try:
             stop_loss = float(self.config.stop_loss)
         except Exception:
@@ -77,14 +87,75 @@ class RSIStrategy:
             self._log(f"STOP LOSS BATIDO: ${self.session.total_profit}", "ERROR")
             self.session.status = 'STOPPED'
             self.session.save()
+            # Broadcast session stopped to frontend
+            try:
+                from .serializers import TradingSessionSerializer
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
             return False
             
         if stop_win > 0 and total_pl >= abs(stop_win):
             self._log(f"STOP WIN BATIDO: ${self.session.total_profit}", "INFO")
             self.session.status = 'STOPPED'
             self.session.save()
+            # Broadcast session stopped to frontend
+            try:
+                from .serializers import TradingSessionSerializer
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
             return False
             
+        return True
+    
+    def _check_score_stop_conditions(self) -> bool:
+        """Check score-based stop conditions (placar)"""
+        from .models import Operation
+        
+        try:
+            placar_win = int(getattr(self.config, 'placar_stop_win', 3))
+            placar_loss = int(getattr(self.config, 'placar_stop_loss', 3))
+        except Exception:
+            placar_win = 3
+            placar_loss = 3
+        
+        try:
+            wins = Operation.objects.filter(session=self.session, result='WIN').count()
+            losses = Operation.objects.filter(session=self.session, result='LOSS').count()
+        except Exception as e:
+            self._log(f"Erro ao contar operações: {e}", "ERROR")
+            return True
+        
+        score_diff = wins - losses
+        total_pl = float(self.session.total_profit) if self.session.total_profit else 0.0
+        
+        if score_diff >= placar_win and total_pl > 0:
+            self._log(f"🏆 STOP WIN POR PLACAR: {wins}x{losses} | Lucro: ${total_pl:.2f}", "INFO")
+            self.session.status = 'STOPPED'
+            self.session.save()
+            try:
+                from .serializers import TradingSessionSerializer
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
+            return False
+        
+        if score_diff <= -placar_loss and total_pl < 0:
+            self._log(f"❌ STOP LOSS POR PLACAR: {wins}x{losses} | Prejuízo: ${total_pl:.2f}", "ERROR")
+            self.session.status = 'STOPPED'
+            self.session.save()
+            try:
+                from .serializers import TradingSessionSerializer
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
+            return False
+        
         return True
 
     def _ws_group(self) -> str:
@@ -336,8 +407,8 @@ class RSIStrategy:
         return False
 
     def _wait_for_result(self, operation: Operation, operation_type: str) -> Optional[float]:
-        """Wait for operation result"""
-        max_wait_time = 300  # 5 minutes max wait
+        """Wait for operation result - optimized for fast Gale execution"""
+        max_wait_time = 60  # 1 minute max wait (reduced from 5)
         start_time = time.time()
         
         while time.time() - start_time < max_wait_time:
@@ -355,7 +426,7 @@ class RSIStrategy:
                     self._log(f"Aguardando resultado... {int(elapsed)}s", "DEBUG")
                 except Exception:
                     pass
-            time.sleep(1)
+            time.sleep(0.1)  # Ultra-fast polling (0.1s) for quick Gale execution
         
         self._log(f"Timeout aguardando resultado. Considerando perda.", "WARNING")
         try:

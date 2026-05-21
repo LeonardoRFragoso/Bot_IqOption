@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Card,
   CardContent,
@@ -20,19 +20,86 @@ import {
   PlayCircle,
 } from '@mui/icons-material';
 import { useTradingControl, useConnectionStatus } from '../../hooks/useApi';
+import apiService from '../../services/api';
 
 interface TradingControlProps {
   onStatusChange?: (status: 'stopped' | 'running' | 'paused') => void;
+  selectedAsset?: string;
+  selectedStrategy?: string;
 }
 
-const TradingControl: React.FC<TradingControlProps> = ({ onStatusChange }) => {
+const TradingControl: React.FC<TradingControlProps> = ({ 
+  onStatusChange, 
+  selectedAsset: propAsset,
+  selectedStrategy: propStrategy 
+}) => {
   const [tradingStatus, setTradingStatus] = useState<'stopped' | 'running' | 'paused'>('stopped');
-  const [selectedStrategy, setSelectedStrategy] = useState('mhi');
+  const [selectedStrategy, setSelectedStrategy] = useState(propStrategy || 'mhi');
+  const [selectedAsset, setSelectedAsset] = useState(propAsset || '');
+  const [startError, setStartError] = useState<string | null>(null);
+  
+  // Map strategy names from catalog to internal format
+  const normalizeStrategy = (strategy: string): string => {
+    const strategyMap: { [key: string]: string } = {
+      'mhi': 'mhi',
+      'MHI': 'mhi',
+      'torres_gemeas': 'torres_gemeas',
+      'TORRES_GEMEAS': 'torres_gemeas',
+      'mhi_m5': 'mhi_m5',
+      'MHI_M5': 'mhi_m5',
+      'rsi': 'rsi',
+      'RSI': 'rsi',
+      'moving_average': 'moving_average',
+      'MOVING_AVERAGE': 'moving_average',
+      'bollinger_bands': 'bollinger_bands',
+      'BOLLINGER_BANDS': 'bollinger_bands',
+      'macd': 'macd',
+      'MACD': 'macd',
+    };
+    return strategyMap[strategy] || strategy.toLowerCase();
+  };
+
+  // Sync with props when they change
+  useEffect(() => {
+    if (propAsset) setSelectedAsset(propAsset);
+  }, [propAsset]);
+  
+  useEffect(() => {
+    if (propStrategy) {
+      const normalized = normalizeStrategy(propStrategy);
+      setSelectedStrategy(normalized);
+    }
+  }, [propStrategy]);
+
+  // Load active session state on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const active = await apiService.getActiveSession();
+        if (active) {
+          const status = (active as any).status as string;
+          if (status === 'RUNNING') {
+            setTradingStatus('running');
+          } else if (status === 'PAUSED') {
+            setTradingStatus('paused');
+          }
+          // Restore asset and strategy from active session if not provided via props
+          if (!propAsset && (active as any).asset) {
+            setSelectedAsset((active as any).asset);
+          }
+          if (!propStrategy && (active as any).strategy) {
+            setSelectedStrategy((active as any).strategy);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
   
   const { 
     loading: tradingLoading, 
     error: tradingError, 
-    startTrading, 
     stopTrading, 
     pauseTrading, 
     resumeTrading 
@@ -48,15 +115,26 @@ const TradingControl: React.FC<TradingControlProps> = ({ onStatusChange }) => {
     { value: 'mhi', label: 'MHI (3 Velas)' },
     { value: 'torres_gemeas', label: 'Torres Gêmeas (1 Vela)' },
     { value: 'mhi_m5', label: 'MHI M5 (5 Minutos)' },
+    { value: 'rsi', label: 'RSI' },
+    { value: 'moving_average', label: 'Médias Móveis' },
+    { value: 'bollinger_bands', label: 'Bollinger Bands' },
+    { value: 'macd', label: 'MACD' },
   ];
 
   const handleStart = async () => {
+    setStartError(null);
     try {
-      await startTrading(selectedStrategy);
+      // Use the selected asset - REQUIRED for trading
+      if (!selectedAsset) {
+        setStartError('Selecione um ativo na lista "Melhores Ativos para Operar" antes de iniciar.');
+        return;
+      }
+      await apiService.startTrading(selectedStrategy, selectedAsset);
       setTradingStatus('running');
       onStatusChange?.('running');
     } catch (error) {
       console.error('Erro ao iniciar trading:', error);
+      setStartError('Erro ao iniciar trading. Verifique a conexão.');
     }
   };
 
@@ -134,6 +212,12 @@ const TradingControl: React.FC<TradingControlProps> = ({ onStatusChange }) => {
         {tradingError && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {tradingError}
+          </Alert>
+        )}
+
+        {startError && (
+          <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setStartError(null)}>
+            {startError}
           </Alert>
         )}
 
@@ -223,6 +307,11 @@ const TradingControl: React.FC<TradingControlProps> = ({ onStatusChange }) => {
         </Box>
 
         <Box sx={{ mt: 2 }}>
+          {selectedAsset && (
+            <Typography variant="body2" color="textSecondary">
+              <strong>Ativo Selecionado:</strong> {selectedAsset}
+            </Typography>
+          )}
           <Typography variant="body2" color="textSecondary">
             <strong>Estratégia Selecionada:</strong> {strategies.find(s => s.value === selectedStrategy)?.label}
           </Typography>

@@ -111,13 +111,16 @@ class OperationSerializer(serializers.ModelSerializer):
 class AssetCatalogSerializer(serializers.ModelSerializer):
     """Serializer for asset catalog"""
     
+    is_recommended = serializers.ReadOnlyField()
+    
     class Meta:
         model = AssetCatalog
         fields = [
             'asset', 'strategy', 'win_rate', 'gale1_rate', 'gale2_rate', 'gale3_rate',
-            'total_samples', 'analyzed_at'
+            'total_samples', 'trend', 'trend_strength', 'score', 'payout',
+            'mtf_analysis', 'is_recommended', 'analyzed_at'
         ]
-        read_only_fields = ['analyzed_at']
+        read_only_fields = ['analyzed_at', 'is_recommended']
 
 
 class TradingLogSerializer(serializers.ModelSerializer):
@@ -184,17 +187,12 @@ class CatalogAssetsSerializer(serializers.Serializer):
     
     strategies = serializers.MultipleChoiceField(
         choices=[
-            ('mhi', 'MHI'),
+            # Estratégias principais (para catalogação)
+            ('mhi', 'MHI M1'),
             ('torres_gemeas', 'Torres Gêmeas'),
             ('mhi_m5', 'MHI M5'),
-            ('rsi', 'RSI'),
-            ('moving_average', 'Moving Average'),
-            ('bollinger_bands', 'Bollinger Bands'),
-            ('engulfing', 'Engulfing'),
-            ('candlestick', 'Candlestick Patterns'),
-            ('macd', 'MACD'),
         ],
-        default=['mhi', 'torres_gemeas', 'mhi_m5', 'rsi', 'moving_average', 'bollinger_bands', 'engulfing', 'candlestick', 'macd']
+        default=['mhi', 'torres_gemeas', 'mhi_m5']
     )
 
 

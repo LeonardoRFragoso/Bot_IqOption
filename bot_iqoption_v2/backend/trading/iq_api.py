@@ -390,10 +390,8 @@ class IQOptionAPI:
                     unique_assets.append(asset)
             
             if unique_assets:
-                self._log_message(f"Encontrados {len(unique_assets)} ativos disponíveis via API", "INFO")
                 return unique_assets
             else:
-                self._log_message("Usando ativos padrão (nenhum ativo encontrado)", "INFO")
                 return self._get_fallback_assets()
             
         except Exception as e:

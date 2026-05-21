@@ -36,13 +36,18 @@ class WebsocketClient(object):
                 else:
                     #del mini key
                     del dict[key1][key2][sorted(dict[key1][key2].keys(), reverse=False)[0]]   
-    def on_message(self, message): # pylint: disable=unused-argument
+    def on_message(self, ws, message): # pylint: disable=unused-argument
         """Method to process websocket messages."""
         global_value.ssl_Mutual_exclusion=True
         logger = logging.getLogger(__name__)
         logger.debug(message)
 
-        message = json.loads(str(message))
+        try:
+            message = json.loads(str(message))
+        except json.JSONDecodeError as e:
+            logger.warning(f"[WS] JSON decode error ignorado: {e}")
+            global_value.ssl_Mutual_exclusion=False
+            return
 
         if message["name"] == "timeSync":
             self.api.timesync.server_timestamp = message["msg"]
@@ -314,20 +319,20 @@ class WebsocketClient(object):
                 
     
     @staticmethod
-    def on_error(wss, error): # pylint: disable=unused-argument
+    def on_error(ws, error): # pylint: disable=unused-argument
         """Method to process websocket errors."""
         logger = logging.getLogger(__name__)
         logger.error(error)
         global_value.websocket_error_reason=str(error)
         global_value.check_websocket_if_error=True
     @staticmethod
-    def on_open(wss): # pylint: disable=unused-argument
+    def on_open(ws): # pylint: disable=unused-argument
         """Method to process websocket open."""
         logger = logging.getLogger(__name__)
         logger.debug("Websocket client connected.")
         global_value.check_websocket_if_connect=1
     @staticmethod
-    def on_close(wss): # pylint: disable=unused-argument
+    def on_close(ws, close_status_code=None, close_msg=None): # pylint: disable=unused-argument
         """Method to process websocket close."""
         logger = logging.getLogger(__name__)
         logger.debug("Websocket connection closed.")

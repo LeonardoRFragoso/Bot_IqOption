@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db.models import Sum, Avg, Count, Q
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime
 import threading
 import time
 
@@ -63,6 +63,21 @@ def run_trading_loop(user, session, strategy, api):
             session.status = 'STOPPED'
             session.stopped_at = timezone.now()
             session.save()
+            # Broadcast session stopped to frontend
+            try:
+                from channels.layers import get_channel_layer
+                from asgiref.sync import async_to_sync
+                from .serializers import TradingSessionSerializer
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    group = f"trading_{user.id}"
+                    sess_payload = TradingSessionSerializer(session).data
+                    async_to_sync(channel_layer.group_send)(group, {
+                        'type': 'session_update',
+                        'data': sess_payload,
+                    })
+            except Exception:
+                pass
         # Remove from active threads (idempotent, avoid race conditions)
         try:
             trading_threads.pop(session.id, None)
@@ -334,6 +349,21 @@ def stop_trading(request):
         session.status = 'STOPPED'
         session.stopped_at = timezone.now()
         session.save()
+        # Broadcast session stopped to frontend
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            from .serializers import TradingSessionSerializer
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                group = f"trading_{request.user.id}"
+                sess_payload = TradingSessionSerializer(session).data
+                async_to_sync(channel_layer.group_send)(group, {
+                    'type': 'session_update',
+                    'data': sess_payload,
+                })
+        except Exception:
+            pass
     # Proactively disconnect and remove API instance when user stops trading
     try:
         IQOptionManager.remove_instance(request.user)
@@ -456,9 +486,31 @@ def catalog_assets(request):
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_catalog_results(request):
-    """Get asset catalog results"""
+    """Get asset catalog results - returns only the most recent analysis for each asset+strategy"""
+    from django.db.models import Max
     
-    catalogs = AssetCatalog.objects.filter(user=request.user).order_by('-gale3_rate')
+    # Filter only main strategies (mhi, torres_gemeas, mhi_m5)
+    main_strategies = ['mhi', 'torres_gemeas', 'mhi_m5']
+    
+    # Get the most recent entry for MAIN strategies to determine the session
+    latest_main = AssetCatalog.objects.filter(
+        user=request.user,
+        strategy__in=main_strategies
+    ).order_by('-analyzed_at').first()
+    
+    if not latest_main:
+        return Response([])
+    
+    # Get all entries from the same cataloging session (within 10 minutes of the latest main strategy entry)
+    from datetime import timedelta
+    session_start = latest_main.analyzed_at - timedelta(minutes=10)
+    
+    catalogs = AssetCatalog.objects.filter(
+        user=request.user,
+        analyzed_at__gte=session_start,
+        strategy__in=main_strategies
+    ).order_by('-gale3_rate', '-analyzed_at')
+    
     serializer = AssetCatalogSerializer(catalogs, many=True)
     
     return Response(serializer.data)
@@ -751,7 +803,6 @@ def market_status(request):
             market_info = api.get_market_status_info()
         else:
             # Fallback time info if API instance is unavailable
-            from datetime import datetime, timezone, timedelta
             now_utc = datetime.now(timezone.utc)
             ny_time = now_utc - timedelta(hours=5)
             london_time = now_utc + timedelta(hours=0)
@@ -766,16 +817,33 @@ def market_status(request):
                 'us_stocks_open': False,
             }
 
-        # If not connected, DO NOT query open assets or best asset to avoid any platform interaction
+        # Get cataloged assets as fallback when not connected
+        cataloged_assets = list(
+            AssetCatalog.objects.filter(user=request.user)
+            .values_list('asset', flat=True)
+            .distinct()
+            .order_by('asset')[:20]
+        )
+        
+        # OTC markets are always open (24/7)
+        otc_assets = [a for a in cataloged_assets if '-OTC' in a]
+        binary_open = len(otc_assets) > 0 or not market_info.get('is_weekend', False)
+
+        # If not connected, show cataloged assets
         if not api or not api.connected:
+            # Get best asset from catalog
+            best_catalog = AssetCatalog.objects.filter(user=request.user).order_by('-gale2_rate').first()
+            best_asset = best_catalog.asset if best_catalog else None
+            
             return Response({
                 'market_info': market_info,
-                'open_assets_count': 0,
-                'open_assets': [],
-                'best_asset': None,
+                'open_assets_count': len(cataloged_assets),
+                'open_assets': cataloged_assets[:10],
+                'best_asset': best_asset,
                 'recommendations': {
                     'forex_trading': market_info.get('forex_open', False),
                     'stock_trading': market_info.get('us_stocks_open', False),
+                    'binary_trading': binary_open,
                     'weekend_mode': market_info.get('is_weekend', False)
                 }
             })
@@ -783,6 +851,10 @@ def market_status(request):
         # Connected: safe to query live info
         open_assets = api.get_open_assets()
         best_asset = api.get_best_available_asset()
+        
+        # If no live assets, use cataloged
+        if not open_assets:
+            open_assets = cataloged_assets
 
         return Response({
             'market_info': market_info,
@@ -792,6 +864,7 @@ def market_status(request):
             'recommendations': {
                 'forex_trading': market_info.get('forex_open', False),
                 'stock_trading': market_info.get('us_stocks_open', False),
+                'binary_trading': binary_open,
                 'weekend_mode': market_info.get('is_weekend', False)
             }
         })
@@ -862,5 +935,428 @@ def get_available_strategies(request):
     except Exception as e:
         return Response(
             {'error': f'Erro ao obter estratégias: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+# ============================================
+# ADVANCED ANALYSIS ENDPOINTS
+# ============================================
+
+from .advanced_analysis import (
+    SmartAssetSelector, MultiTimeframeAnalyzer, TrendAnalyzer,
+    CorrelationManager, TradingScheduler, ConsecutiveLossTracker,
+    AssetBlacklist, get_correlation_manager, get_loss_tracker, get_blacklist
+)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_best_assets(request):
+    """Get best assets to trade based on catalog and advanced analysis"""
+    try:
+        user = request.user
+        
+        # Get filter parameters from query or user config
+        try:
+            config = user.trading_config
+            min_win_rate = float(request.query_params.get('min_win_rate', config.min_win_rate_filter))
+            min_gale1_rate = float(request.query_params.get('min_gale1_rate', config.min_gale1_rate_filter))
+            check_trend = request.query_params.get('check_trend', 'true').lower() == 'true'
+            check_correlation = config.check_correlation
+        except Exception:
+            min_win_rate = float(request.query_params.get('min_win_rate', 60))
+            min_gale1_rate = float(request.query_params.get('min_gale1_rate', 75))
+            check_trend = request.query_params.get('check_trend', 'true').lower() == 'true'
+            check_correlation = True
+        
+        max_results = int(request.query_params.get('max_results', 10))
+        
+        # Only main strategies (mhi, torres_gemeas, mhi_m5) - not confirmation filters
+        main_strategies = ['mhi', 'torres_gemeas', 'mhi_m5']
+        
+        # Get catalog results - only main strategies
+        catalog_results = AssetCatalog.objects.filter(
+            user=user,
+            strategy__in=main_strategies
+        ).values(
+            'asset', 'strategy', 'win_rate', 'gale1_rate', 'gale2_rate', 
+            'gale3_rate', 'total_samples', 'analyzed_at', 'trend', 'score'
+        )
+        
+        # Filter and sort
+        filtered_results = []
+        for result in catalog_results:
+            win_rate = float(result['win_rate'])
+            gale1_rate = float(result['gale1_rate'])
+            
+            if win_rate >= min_win_rate and gale1_rate >= min_gale1_rate:
+                # Calculate score if not already set
+                score = float(result.get('score', 0))
+                if score == 0:
+                    score = win_rate
+                    if gale1_rate >= 80:
+                        score += 10
+                    if float(result['gale2_rate']) >= 90:
+                        score += 5
+                    if result['total_samples'] >= 30:
+                        score += 5
+                    elif result['total_samples'] < 10:
+                        score -= 10
+                
+                filtered_results.append({
+                    **result,
+                    'score': round(score, 2),
+                    'is_recommended': win_rate >= 60 and gale1_rate >= 75,
+                    'analyzed_at': result['analyzed_at'].isoformat() if result['analyzed_at'] else None
+                })
+        
+        # Sort by score
+        filtered_results.sort(key=lambda x: x['score'], reverse=True)
+        
+        return Response({
+            'assets': filtered_results[:max_results],
+            'total_filtered': len(filtered_results),
+            'filters': {
+                'min_win_rate': min_win_rate,
+                'min_gale1_rate': min_gale1_rate,
+                'check_trend': check_trend,
+                'check_correlation': check_correlation
+            }
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter melhores ativos: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_multi_timeframe_analysis(request):
+    """Get multi-timeframe analysis for an asset"""
+    try:
+        asset = request.query_params.get('asset')
+        if not asset:
+            return Response({'error': 'Parâmetro "asset" é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        timeframes_param = request.query_params.get('timeframes', '60,300')
+        timeframes = [int(tf.strip()) for tf in timeframes_param.split(',')]
+        
+        api = IQOptionManager.get_instance(request.user)
+        if not api or not api.connected:
+            return Response({'error': 'API não conectada'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        analyzer = MultiTimeframeAnalyzer(api)
+        result = analyzer.analyze_multi_timeframe(asset, timeframes)
+        
+        return Response(result)
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro na análise multi-timeframe: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_trading_schedule(request):
+    """Get current trading schedule and recommended assets"""
+    try:
+        current_sessions = TradingScheduler.get_current_session()
+        recommended_assets = TradingScheduler.get_recommended_assets()
+        
+        # Check specific asset if provided
+        asset = request.query_params.get('asset')
+        asset_check = None
+        if asset:
+            is_good, reason = TradingScheduler.is_good_time_for_asset(asset)
+            asset_check = {'asset': asset, 'is_good_time': is_good, 'reason': reason}
+        
+        return Response({
+            'current_sessions': current_sessions,
+            'recommended_assets': recommended_assets,
+            'asset_check': asset_check,
+            'sessions_info': TradingScheduler.TRADING_SESSIONS
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter schedule: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_correlation_status(request):
+    """Get current correlation exposure status"""
+    try:
+        manager = get_correlation_manager(request.user.id)
+        
+        # Check specific asset if provided
+        asset = request.query_params.get('asset')
+        asset_check = None
+        if asset:
+            can_trade, reason = manager.can_trade_asset(asset)
+            group = manager.get_correlation_group(asset)
+            asset_check = {
+                'asset': asset,
+                'can_trade': can_trade,
+                'reason': reason,
+                'correlation_group': group
+            }
+        
+        return Response({
+            'active_correlations': manager.get_active_correlations(),
+            'asset_check': asset_check
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter status de correlação: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_loss_tracker_status(request):
+    """Get consecutive loss tracker status"""
+    try:
+        tracker = get_loss_tracker(request.user.id)
+        return Response(tracker.get_status())
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter status de perdas: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def reset_loss_tracker(request):
+    """Reset consecutive loss tracker"""
+    try:
+        tracker = get_loss_tracker(request.user.id)
+        tracker.reset()
+        return Response({'message': 'Contador de perdas resetado', 'status': tracker.get_status()})
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao resetar contador: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET', 'POST', 'DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def manage_blacklist(request):
+    """Manage asset blacklist"""
+    try:
+        blacklist = get_blacklist(request.user.id)
+        
+        if request.method == 'GET':
+            return Response(blacklist.get_blacklist())
+        
+        elif request.method == 'POST':
+            asset = request.data.get('asset')
+            if not asset:
+                return Response({'error': 'Parâmetro "asset" é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            temporary = request.data.get('temporary', False)
+            duration = int(request.data.get('duration_minutes', 60))
+            
+            blacklist.add_to_blacklist(asset, temporary=temporary, duration_minutes=duration)
+            return Response({
+                'message': f'Ativo {asset} adicionado à blacklist',
+                'blacklist': blacklist.get_blacklist()
+            })
+        
+        elif request.method == 'DELETE':
+            asset = request.data.get('asset')
+            if not asset:
+                return Response({'error': 'Parâmetro "asset" é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            blacklist.remove_from_blacklist(asset)
+            return Response({
+                'message': f'Ativo {asset} removido da blacklist',
+                'blacklist': blacklist.get_blacklist()
+            })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao gerenciar blacklist: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_strategy_performance(request):
+    """Get performance statistics by strategy"""
+    try:
+        user = request.user
+        days = int(request.query_params.get('days', 30))
+        
+        from_date = timezone.now() - timedelta(days=days)
+        
+        # Get operations grouped by strategy
+        operations = Operation.objects.filter(
+            session__user=user,
+            created_at__gte=from_date
+        ).values('session__strategy').annotate(
+            total=Count('id'),
+            wins=Count('id', filter=Q(result='WIN')),
+            losses=Count('id', filter=Q(result='LOSS')),
+            profit=Sum('profit_loss')
+        )
+        
+        strategy_stats = []
+        for op in operations:
+            strategy = op['session__strategy']
+            total = op['total']
+            wins = op['wins']
+            win_rate = (wins / total * 100) if total > 0 else 0
+            
+            strategy_stats.append({
+                'strategy': strategy,
+                'total_operations': total,
+                'wins': wins,
+                'losses': op['losses'],
+                'win_rate': round(win_rate, 2),
+                'profit_loss': float(op['profit'] or 0)
+            })
+        
+        # Sort by win rate
+        strategy_stats.sort(key=lambda x: x['win_rate'], reverse=True)
+        
+        return Response({
+            'strategies': strategy_stats,
+            'period_days': days,
+            'best_strategy': strategy_stats[0]['strategy'] if strategy_stats else None
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter performance: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_daily_performance(request):
+    """Get daily performance statistics"""
+    try:
+        user = request.user
+        days = int(request.query_params.get('days', 7))
+        
+        daily_stats = []
+        
+        for i in range(days):
+            date = timezone.now().date() - timedelta(days=i)
+            start = timezone.make_aware(datetime.combine(date, datetime.min.time()))
+            end = timezone.make_aware(datetime.combine(date, datetime.max.time()))
+            
+            operations = Operation.objects.filter(
+                session__user=user,
+                created_at__gte=start,
+                created_at__lte=end
+            )
+            
+            total = operations.count()
+            wins = operations.filter(result='WIN').count()
+            profit = operations.aggregate(total=Sum('profit_loss'))['total'] or 0
+            
+            daily_stats.append({
+                'date': date.isoformat(),
+                'total_operations': total,
+                'wins': wins,
+                'losses': operations.filter(result='LOSS').count(),
+                'win_rate': round((wins / total * 100) if total > 0 else 0, 2),
+                'profit_loss': float(profit)
+            })
+        
+        return Response({
+            'daily_stats': daily_stats,
+            'period_days': days
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter performance diária: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_catalog_with_filters(request):
+    """Get catalog results with advanced filters"""
+    try:
+        user = request.user
+        
+        # Get filter parameters
+        min_win_rate = float(request.query_params.get('min_win_rate', 0))
+        min_gale1_rate = float(request.query_params.get('min_gale1_rate', 0))
+        min_samples = int(request.query_params.get('min_samples', 0))
+        strategy = request.query_params.get('strategy')
+        trend = request.query_params.get('trend')
+        sort_by = request.query_params.get('sort_by', 'score')
+        order = request.query_params.get('order', 'desc')
+        
+        # Build query
+        queryset = AssetCatalog.objects.filter(user=user)
+        
+        if min_win_rate > 0:
+            queryset = queryset.filter(win_rate__gte=min_win_rate)
+        if min_gale1_rate > 0:
+            queryset = queryset.filter(gale1_rate__gte=min_gale1_rate)
+        if min_samples > 0:
+            queryset = queryset.filter(total_samples__gte=min_samples)
+        if strategy:
+            queryset = queryset.filter(strategy=strategy)
+        if trend:
+            queryset = queryset.filter(trend=trend)
+        
+        # Sort
+        order_prefix = '-' if order == 'desc' else ''
+        valid_sort_fields = ['score', 'win_rate', 'gale1_rate', 'total_samples', 'analyzed_at']
+        if sort_by in valid_sort_fields:
+            queryset = queryset.order_by(f'{order_prefix}{sort_by}')
+        
+        # Serialize
+        results = list(queryset.values(
+            'asset', 'strategy', 'win_rate', 'gale1_rate', 'gale2_rate',
+            'gale3_rate', 'total_samples', 'trend', 'trend_strength', 
+            'score', 'payout', 'analyzed_at'
+        ))
+        
+        # Format dates
+        for r in results:
+            if r['analyzed_at']:
+                r['analyzed_at'] = r['analyzed_at'].isoformat()
+        
+        return Response({
+            'results': results,
+            'total': len(results),
+            'filters': {
+                'min_win_rate': min_win_rate,
+                'min_gale1_rate': min_gale1_rate,
+                'min_samples': min_samples,
+                'strategy': strategy,
+                'trend': trend,
+                'sort_by': sort_by,
+                'order': order
+            }
+        })
+        
+    except Exception as e:
+        return Response(
+            {'error': f'Erro ao obter catálogo: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

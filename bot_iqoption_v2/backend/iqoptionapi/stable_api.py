@@ -178,15 +178,21 @@ class IQ_Option:
         # type="crypto"/"forex"/"cfd"
         time.sleep(self.suspend)
         self.api.instruments = None
+        max_retries = 3
+        retry_count = 0
         while self.api.instruments == None:
             try:
                 self.api.get_instruments(type)
                 start = time.time()
                 while self.api.instruments == None and time.time() - start < 10:
-                    pass
+                    time.sleep(0.1)
             except:
-                logging.error('**error** api.get_instruments need reconnect')
+                logging.error('[API] get_instruments precisa reconectar')
                 self.connect()
+            retry_count += 1
+            if retry_count >= max_retries:
+                logging.warning(f'[API] get_instruments falhou após {max_retries} tentativas')
+                return {"instruments": []}
         return self.api.instruments
 
     def instruments_input_to_ACTIVES(self, type):
@@ -242,8 +248,9 @@ class IQ_Option:
         start_t = time.time()
         while self.api.api_option_init_all_result_v2 == None:
             if time.time() - start_t >= 30:
-                logging.error('**warning** get_all_init_v2 late 30 sec')
+                logging.warning('[API] get_all_init_v2 timeout após 30 segundos')
                 return None
+            time.sleep(0.1)
         return self.api.api_option_init_all_result_v2
 
         # return OP_code.ACTIVES
@@ -254,8 +261,13 @@ class IQ_Option:
         # for binary option turbo and binary
         OPEN_TIME = nested_dict(3, dict)
         binary_data = self.get_all_init_v2()
+        if binary_data is None:
+            logging.warning('[API] get_all_open_time: binary_data é None, retornando OPEN_TIME vazio')
+            return OPEN_TIME
         binary_list = ["binary", "turbo"]
         for option in binary_list:
+            if option not in binary_data or "actives" not in binary_data[option]:
+                continue
             for actives_id in binary_data[option]["actives"]:
                 active = binary_data[option]["actives"][actives_id]
                 name = str(active["name"]).split(".")[1]
@@ -877,9 +889,10 @@ class IQ_Option:
         start_t = time.time()
         while self.api.underlying_list_data == None:
             if time.time() - start_t >= 30:
-                logging.error(
-                    '**warning** get_digital_underlying_list_data late 30 sec')
+                logging.warning(
+                    '[API] get_digital_underlying_list_data timeout após 30 segundos')
                 return None
+            time.sleep(0.1)
 
         return self.api.underlying_list_data
 

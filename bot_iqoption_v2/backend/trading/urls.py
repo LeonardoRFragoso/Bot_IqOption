@@ -37,4 +37,22 @@ urlpatterns = [
     
     # Strategies
     path('strategies/', views.get_available_strategies, name='available_strategies'),
+    
+    # Advanced Analysis
+    path('analysis/best-assets/', views.get_best_assets, name='best_assets'),
+    path('analysis/multi-timeframe/', views.get_multi_timeframe_analysis, name='multi_timeframe_analysis'),
+    path('analysis/schedule/', views.get_trading_schedule, name='trading_schedule'),
+    path('analysis/correlation/', views.get_correlation_status, name='correlation_status'),
+    
+    # Safety & Controls
+    path('safety/loss-tracker/', views.get_loss_tracker_status, name='loss_tracker_status'),
+    path('safety/loss-tracker/reset/', views.reset_loss_tracker, name='reset_loss_tracker'),
+    path('safety/blacklist/', views.manage_blacklist, name='manage_blacklist'),
+    
+    # Performance Statistics
+    path('performance/strategies/', views.get_strategy_performance, name='strategy_performance'),
+    path('performance/daily/', views.get_daily_performance, name='daily_performance'),
+    
+    # Catalog with filters
+    path('catalog/filtered/', views.get_catalog_with_filters, name='catalog_filtered'),
 ]

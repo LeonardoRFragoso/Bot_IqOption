@@ -28,6 +28,10 @@ export interface TradingConfiguration {
   valor_entrada: number;
   stop_win: number;
   stop_loss: number;
+  // Stop por Placar
+  stop_por_placar: boolean;
+  placar_stop_win: number;
+  placar_stop_loss: number;
   analise_medias: boolean;
   velas_medias: number;
   tipo_par: 'automatico' | 'manual';
@@ -124,6 +128,7 @@ export interface Operation {
   strategy_used: string;
   martingale_level: number;
   soros_level: number;
+  operation_type?: string;  // ENTRY, GALE1, GALE2, etc.
   created_at: string;
   closed_at?: string;
 }

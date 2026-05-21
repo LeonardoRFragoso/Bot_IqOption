@@ -52,7 +52,7 @@ function TabPanel(props: TabPanelProps) {
 const Settings: React.FC = () => {
   const [tabValue, setTabValue] = useState(0);
   const [iqCredentials, setIqCredentials] = useState({ email: '', password: '' });
-  const [accountType, setAccountType] = useState<'PRACTICE' | 'REAL'>('PRACTICE');
+  const [accountType, setAccountType] = useState<'PRACTICE' | 'REAL'>('REAL');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const { user, refreshUser } = useAuth();

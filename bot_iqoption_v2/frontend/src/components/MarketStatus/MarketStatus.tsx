@@ -33,6 +33,7 @@ interface MarketStatusData {
   recommendations: {
     forex_trading: boolean;
     stock_trading: boolean;
+    binary_trading?: boolean;
     weekend_mode: boolean;
   };
 }
@@ -137,19 +138,19 @@ const MarketStatus: React.FC = () => {
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                 <Chip 
+                  label={`Binários/OTC: ${getStatusText(marketData.recommendations.binary_trading ?? true)}`}
+                  color={getStatusColor(marketData.recommendations.binary_trading ?? true)}
+                  size="small"
+                />
+                <Chip 
                   label={`Forex: ${getStatusText(marketData.recommendations.forex_trading)}`}
                   color={getStatusColor(marketData.recommendations.forex_trading)}
                   size="small"
                 />
-                <Chip 
-                  label={`Ações: ${getStatusText(marketData.recommendations.stock_trading)}`}
-                  color={getStatusColor(marketData.recommendations.stock_trading)}
-                  size="small"
-                />
                 {marketData.recommendations.weekend_mode && (
                   <Chip 
-                    label="MODO FIM DE SEMANA"
-                    color="warning"
+                    label="FIM DE SEMANA (OTC 24/7)"
+                    color="info"
                     size="small"
                   />
                 )}

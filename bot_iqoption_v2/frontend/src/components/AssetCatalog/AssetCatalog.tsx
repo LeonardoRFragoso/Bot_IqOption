@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Card,
   CardContent,
@@ -18,22 +18,65 @@ import {
   Tooltip,
   CircularProgress,
 } from '@mui/material';
-import { PlayArrow, Refresh, TrendingUp, TrendingDown } from '@mui/icons-material';
+import { PlayArrow, Refresh, TrendingUp, TrendingDown, HourglassEmpty } from '@mui/icons-material';
 import { useAssetCatalog } from '../../hooks/useApi';
+import apiService from '../../services/api';
 import type { AssetCatalog as AssetCatalogType } from '../../types/index';
 
 const AssetCatalog: React.FC = () => {
   const [runningCatalog, setRunningCatalog] = useState(false);
+  const [catalogProgress, setCatalogProgress] = useState<string>('');
   const { data: assets, loading, error, refetch, runCatalog } = useAssetCatalog();
+
+  // Check catalog status on mount and poll while running
+  const checkCatalogStatus = useCallback(async () => {
+    try {
+      const status = await apiService.getCatalogStatus();
+      if (status.running) {
+        setRunningCatalog(true);
+        setCatalogProgress('Catalogação em andamento...');
+        return true;
+      } else {
+        setRunningCatalog(false);
+        setCatalogProgress('');
+        return false;
+      }
+    } catch (err) {
+      console.error('Erro ao verificar status:', err);
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    // Check status on mount
+    checkCatalogStatus();
+  }, [checkCatalogStatus]);
+
+  useEffect(() => {
+    // Poll while running
+    if (!runningCatalog) return;
+    
+    const interval = setInterval(async () => {
+      const stillRunning = await checkCatalogStatus();
+      if (!stillRunning) {
+        // Cataloging finished, refresh data
+        refetch();
+      }
+    }, 2000);
+    
+    return () => clearInterval(interval);
+  }, [runningCatalog, checkCatalogStatus, refetch]);
 
   const handleRunCatalog = async () => {
     setRunningCatalog(true);
+    setCatalogProgress('Iniciando catalogação...');
     try {
       await runCatalog();
+      setCatalogProgress('Catalogação em andamento...');
     } catch (err) {
       console.error('Erro ao executar catalogação:', err);
-    } finally {
       setRunningCatalog(false);
+      setCatalogProgress('');
     }
   };
 
@@ -120,6 +163,24 @@ const AssetCatalog: React.FC = () => {
         <Typography variant="body2" color="textSecondary" gutterBottom>
           Análise de performance dos ativos baseada nas estratégias de trading
         </Typography>
+
+        {runningCatalog && (
+          <Box sx={{ mb: 2 }}>
+            <Alert 
+              severity="info" 
+              icon={<HourglassEmpty />}
+              sx={{ mb: 1 }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CircularProgress size={16} />
+                <Typography variant="body2">
+                  {catalogProgress || 'Catalogação em andamento...'}
+                </Typography>
+              </Box>
+            </Alert>
+            <LinearProgress />
+          </Box>
+        )}
 
         <TableContainer>
           <Table size="small">

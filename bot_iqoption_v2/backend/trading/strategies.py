@@ -5,6 +5,7 @@ Migrated from legacy v1 with improvements and modern architecture
 
 import time
 import logging
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
@@ -72,11 +73,63 @@ class BaseStrategy:
         logger.info(f"[{self.session.strategy}] {message}")
     
     def _check_stop_conditions(self) -> bool:
-        """Check if stop win/loss conditions are met"""
+        """Check if stop win/loss conditions are met (monetary or score-based)"""
         try:
             total_pl = float(self.session.total_profit)
         except Exception:
             total_pl = 0.0
+        
+        # Check if using score-based stop (placar)
+        use_score_stop = getattr(self.config, 'stop_por_placar', False)
+        
+        if use_score_stop:
+            # Score-based stop: check wins vs losses difference
+            return self._check_score_stop_conditions()
+        else:
+            # Monetary stop: original logic
+            return self._check_monetary_stop_conditions(total_pl)
+    
+    def _get_series_score(self) -> tuple:
+        """Calculate series score (wins, losses) - not individual operations
+        
+        A series = entry + all gales. WIN if any operation wins, LOSS if all lose.
+        """
+        from .models import Operation
+        from datetime import timedelta
+        
+        try:
+            entries = Operation.objects.filter(
+                session=self.session,
+                operation_type='ENTRY'
+            ).order_by('created_at')
+            
+            wins = 0
+            losses = 0
+            
+            for entry in entries:
+                series_end = entry.created_at + timedelta(minutes=5)
+                series_ops = Operation.objects.filter(
+                    session=self.session,
+                    asset=entry.asset,
+                    created_at__gte=entry.created_at,
+                    created_at__lte=series_end
+                )
+                
+                has_win = series_ops.filter(result='WIN').exists()
+                all_closed = not series_ops.filter(result__isnull=True).exists()
+                all_lost = not series_ops.exclude(result__in=['LOSS', 'DRAW']).exists()
+                
+                if has_win:
+                    wins += 1
+                elif all_closed and all_lost and series_ops.exists():
+                    losses += 1
+                    
+            return wins, losses
+        except Exception:
+            return 0, 0
+    
+    def _check_monetary_stop_conditions(self, total_pl: float) -> bool:
+        """Check monetary stop win/loss conditions"""
         try:
             stop_loss = float(self.config.stop_loss)
         except Exception:
@@ -91,14 +144,154 @@ class BaseStrategy:
             self._log(f"STOP LOSS BATIDO: ${self.session.total_profit}", "ERROR")
             self.session.status = 'STOPPED'
             self.session.save()
+            # Broadcast session stopped to frontend
+            try:
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
+            # Send Telegram stop alert with series score
+            try:
+                from .telegram_service import get_telegram_service
+                series_wins, series_losses = self._get_series_score()
+                telegram = get_telegram_service()
+                telegram.send_stop_alert('LOSS', series_wins, series_losses, total_pl)
+            except Exception:
+                pass
             return False
             
         if stop_win > 0 and total_pl >= abs(stop_win):
             self._log(f"STOP WIN BATIDO: ${self.session.total_profit}", "INFO")
             self.session.status = 'STOPPED'
             self.session.save()
+            # Broadcast session stopped to frontend
+            try:
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
+            # Send Telegram stop alert with series score
+            try:
+                from .telegram_service import get_telegram_service
+                series_wins, series_losses = self._get_series_score()
+                telegram = get_telegram_service()
+                telegram.send_stop_alert('WIN', series_wins, series_losses, total_pl)
+            except Exception:
+                pass
             return False
             
+        return True
+    
+    def _check_score_stop_conditions(self) -> bool:
+        """Check score-based stop conditions (placar)
+        
+        Stop Win: When series_wins - series_losses >= placar_stop_win AND profit > 0
+        Stop Loss: When series_losses - series_wins >= placar_stop_loss AND profit < 0
+        
+        A series = entry + all gales. WIN if any operation wins, LOSS if all lose.
+        
+        Examples with placar = 3:
+        - Stop Win: 3x0, 4x1, 5x2, 6x3... (with profit)
+        - Stop Loss: 0x3, 1x4, 2x5, 3x6... (with loss)
+        """
+        from .models import Operation
+        
+        try:
+            placar_win = int(getattr(self.config, 'placar_stop_win', 3))
+            placar_loss = int(getattr(self.config, 'placar_stop_loss', 3))
+        except Exception:
+            placar_win = 3
+            placar_loss = 3
+        
+        # Count series wins and losses (not individual operations)
+        # A series WIN = any operation in the series wins
+        # A series LOSS = all operations in the series lose (entry + all gales)
+        try:
+            # Get all entries (not gales)
+            entries = Operation.objects.filter(
+                session=self.session,
+                operation_type='ENTRY'
+            ).order_by('created_at')
+            
+            wins = 0
+            losses = 0
+            
+            for entry in entries:
+                # Get all operations in this series (entry + gales within 5 minutes)
+                from django.utils import timezone
+                from datetime import timedelta
+                series_end = entry.created_at + timedelta(minutes=5)
+                
+                series_ops = Operation.objects.filter(
+                    session=self.session,
+                    asset=entry.asset,
+                    created_at__gte=entry.created_at,
+                    created_at__lte=series_end
+                )
+                
+                # Check if any operation in series won
+                has_win = series_ops.filter(result='WIN').exists()
+                # Check if all operations closed and all lost
+                all_closed = not series_ops.filter(result__isnull=True).exists()
+                all_lost = not series_ops.exclude(result__in=['LOSS', 'DRAW']).exists()
+                
+                if has_win:
+                    wins += 1
+                elif all_closed and all_lost and series_ops.exists():
+                    losses += 1
+                    
+        except Exception as e:
+            self._log(f"Erro ao contar séries: {e}", "ERROR")
+            return True
+        
+        # Calculate score difference
+        score_diff = wins - losses
+        total_pl = float(self.session.total_profit) if self.session.total_profit else 0.0
+        
+        # Log current score periodically
+        if (wins + losses) > 0 and (wins + losses) % 3 == 0:
+            self._log(f"Placar atual: {wins}x{losses} (diff: {score_diff:+d}) | P&L: ${total_pl:.2f}", "INFO")
+        
+        # Check Stop Win by score: wins ahead by placar_win AND in profit
+        if score_diff >= placar_win and total_pl > 0:
+            self._log(f"🏆 STOP WIN POR PLACAR: {wins}x{losses} | Lucro: ${total_pl:.2f}", "INFO")
+            self.session.status = 'STOPPED'
+            self.session.save()
+            # Broadcast session stopped to frontend
+            try:
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
+            # Send Telegram stop alert
+            try:
+                from .telegram_service import get_telegram_service
+                telegram = get_telegram_service()
+                telegram.send_stop_alert('WIN', wins, losses, total_pl)
+            except Exception:
+                pass
+            return False
+        
+        # Check Stop Loss by score: losses ahead by placar_loss AND in loss
+        if score_diff <= -placar_loss and total_pl < 0:
+            self._log(f"❌ STOP LOSS POR PLACAR: {wins}x{losses} | Prejuízo: ${total_pl:.2f}", "ERROR")
+            self.session.status = 'STOPPED'
+            self.session.save()
+            # Broadcast session stopped to frontend
+            try:
+                sess_payload = TradingSessionSerializer(self.session).data
+                self._ws_send('session_update', sess_payload)
+            except Exception:
+                pass
+            # Send Telegram stop alert
+            try:
+                from .telegram_service import get_telegram_service
+                telegram = get_telegram_service()
+                telegram.send_stop_alert('LOSS', wins, losses, total_pl)
+            except Exception:
+                pass
+            return False
+        
         return True
 
     # ------------------ WS helpers ------------------
@@ -142,7 +335,7 @@ class BaseStrategy:
 
     def _is_entry_time_mhi(self) -> bool:
         """MHI M1: analyze minutes 2-3-4 inside each 5m block and enter at the start of minute 0 of the next block.
-        Gate when minute%5 == 0 with a <=1s window.
+        Gate when minute%5 == 0 with a <=2.0s window for reliable entry.
         """
         st, dt = self._server_dt()
         try:
@@ -156,7 +349,7 @@ class BaseStrategy:
                 minute_in_block = minute_idx % 5
             except Exception:
                 minute_in_block = 0
-        if (minute_in_block == 0) and (sec <= 1.0):
+        if (minute_in_block == 0) and (sec <= 2.0):
             allowed = self._gate_once('mhi', st)
             if allowed:
                 try:
@@ -167,7 +360,7 @@ class BaseStrategy:
         return False
 
     def _is_entry_time_torres(self) -> bool:
-        """Torres Gêmeas: fire at minute 4,9,14,... with a <=1s window"""
+        """Torres Gêmeas: fire at minute 4,9,14,... with a <=1.5s window for entry"""
         st, dt = self._server_dt()
         try:
             sec = float(st) % 60.0
@@ -180,7 +373,7 @@ class BaseStrategy:
                 minute_in_block = minute_idx % 5
             except Exception:
                 minute_in_block = 0
-        if (minute_in_block == 4) and (sec <= 1.0):
+        if (minute_in_block == 4) and (sec <= 1.5):
             allowed = self._gate_once('torres', st)
             if allowed:
                 try:
@@ -191,7 +384,7 @@ class BaseStrategy:
         return False
 
     def _is_entry_time_mhi_m5(self) -> bool:
-        """MHI M5: fire at minute 00 and 30 with a <=1s window"""
+        """MHI M5: fire at minute 00 and 30 with a <=2.0s window for reliable entry"""
         st, dt = self._server_dt()
         try:
             sec = float(st) % 60.0
@@ -204,7 +397,7 @@ class BaseStrategy:
                 minute_in_block_30 = minute_idx % 30
             except Exception:
                 minute_in_block_30 = 0
-        if (minute_in_block_30 == 0) and (sec <= 1.0):
+        if (minute_in_block_30 == 0) and (sec <= 2.0):
             allowed = self._gate_once('mhi_m5', st)
             if allowed:
                 try:
@@ -215,10 +408,50 @@ class BaseStrategy:
         return False
 
     # ------------------ Execution helpers ------------------
-    def _determine_operation_type(self, asset: str) -> Tuple[Optional[str], Optional[str]]:
+    def _wait_for_candle_start(self, max_wait: int = 65) -> bool:
+        """Wait for the start of the next candle (second 0-1.5)
+        
+        Args:
+            max_wait: Maximum seconds to wait (default 65 to cover full candle + buffer)
+            
+        Returns:
+            True if candle start was reached, False if timeout or stopped
+        """
+        start_time = time.time()
+        last_sec = -1
+        
+        while time.time() - start_time < max_wait:
+            if not self.running:
+                return False
+                
+            try:
+                st = self.api.get_server_timestamp()
+                sec = float(st) % 60.0
+                
+                # Detect when we cross into a new minute (sec goes from high to low)
+                if last_sec > 50 and sec <= 1.5:
+                    self._log(f"Início da vela detectado | sec={sec:.2f}", "DEBUG")
+                    return True
+                
+                # Also allow if we're already at the start of a minute
+                if sec <= 1.5 and last_sec == -1:
+                    # First check - if already at start, wait for next minute
+                    pass
+                
+                last_sec = sec
+                    
+            except Exception:
+                pass
+                
+            time.sleep(0.1)
+        
+        self._log("Timeout aguardando início da vela", "WARNING")
+        return False
+    
+    def _determine_operation_type(self, asset: str, force_refresh: bool = False) -> Tuple[Optional[str], Optional[str]]:
         """Determine best operation type and asset based on payouts"""
-        # Check if current asset is available
-        payouts = self.api.get_payout(asset, force_refresh=True)
+        # Check if current asset is available - use cache by default for faster startup
+        payouts = self.api.get_payout(asset, force_refresh=force_refresh)
         self._log(f"[DEBUG] Payouts para {asset}: {payouts}", "DEBUG")
         
         # Remover TURBO da consideração
@@ -553,11 +786,10 @@ class BaseStrategy:
                     series_profit += float(result)
                 except Exception:
                     pass
-                # Execute next Gale immediately on the next candle (no extra 1-minute wait)
+                # Gale is executed immediately - the current candle IS the Gale candle
+                # No need to wait - when result comes (e.g., 08:46:02), we're already in the Gale candle (08:46)
                 if gale_level < martingale_levels:
-                    self._log("Executando Gale imediatamente na próxima vela...", "INFO")
-                    # Sem descanso adicional: enviar imediatamente para minimizar atraso no início da vela
-                    pass
+                    self._log(f"Executando Gale {gale_level + 1} imediatamente...", "INFO")
                 
         # Full series ended without a win: reset Soros progression
         if self.config.soros_usar:
@@ -569,9 +801,10 @@ class BaseStrategy:
         return False
     
     def _wait_for_result(self, operation: Operation, operation_type: str) -> Optional[float]:
-        """Wait for operation result"""
-        max_wait_time = 300  # 5 minutes max wait
+        """Wait for operation result - optimized for fast Gale execution"""
+        max_wait_time = 60  # 1 minute max wait (reduced from 2)
         start_time = time.time()
+        last_log_time = 0
         
         while time.time() - start_time < max_wait_time:
             if not self.running:
@@ -582,14 +815,17 @@ class BaseStrategy:
             if status and result is not None:
                 return result
                 
-            # periodic debug every ~10s
+            # periodic debug every ~10s (but don't block)
             elapsed = time.time() - start_time
-            if int(elapsed) % 10 == 0:
+            if elapsed - last_log_time >= 10:
+                last_log_time = elapsed
                 try:
                     self._log(f"Aguardando resultado... {int(elapsed)}s", "DEBUG")
                 except Exception:
                     pass
-            time.sleep(1)
+            
+            # Ultra-fast polling (0.1s) for quick Gale execution
+            time.sleep(0.1)
         
         # On timeout, consider it as a loss to allow Gale progression
         self._log(f"Timeout aguardando resultado da operação {operation.id}. Considerando perda para prosseguir com Gale.", "WARNING")
@@ -622,38 +858,96 @@ class BaseStrategy:
         
         gale_text = f' (Gale {gale_level})' if gale_level > 0 else ''
         self._log(f"WIN{gale_text} | Lucro: ${result}", "INFO")
+        
+        # Send Telegram notification with series score
+        try:
+            from .telegram_service import send_operation_notification
+            series_wins, series_losses = self._get_series_score()
+            send_operation_notification(
+                asset=operation.asset,
+                direction=operation.direction,
+                amount=float(operation.entry_value),
+                result='WIN',
+                profit_loss=result,
+                gale_level=gale_level,
+                wins=series_wins,
+                losses=series_losses,
+                total_profit=float(self.session.total_profit)
+            )
+        except Exception as e:
+            logger.warning(f"Erro ao enviar notificação Telegram: {e}")
     
     def _handle_loss(self, operation: Operation, result: float, gale_level: int):
-        """Handle losing operation"""
+        """Handle losing operation - optimized for fast Gale execution"""
         if result == 0:
             operation.result = 'DRAW'
             self.session.draws += 1
             result_text = "EMPATE"
+            op_result = 'DRAW'
         else:
             operation.result = 'LOSS'
             self.session.losses += 1
             result_text = f"LOSS | Perda: ${abs(result)}"
+            op_result = 'LOSS'
         
         operation.profit_loss = Decimal(str(result))
         operation.closed_at = timezone.now()
-        operation.save()
         
-        # Update session statistics
+        # Log immediately before any I/O
+        gale_text = f' (Gale {gale_level})' if gale_level > 0 else ''
+        self._log(f"{result_text}{gale_text}", "INFO")
+        
+        # Update in-memory counters immediately
         self.session.total_operations += 1
         self.session.total_profit += Decimal(str(result))
-        self.session.current_balance = Decimal(str(self.api.get_balance()))
-        self.session.save()
-        # WS broadcast updates
-        try:
-            op_payload = OperationSerializer(operation).data
-            sess_payload = TradingSessionSerializer(self.session).data
-            self._ws_send('operation_update', op_payload)
-            self._ws_send('session_update', sess_payload)
-        except Exception:
-            pass
         
-        gale_text = f' (Gale {gale_level})' if gale_level > 0 else ''
-        self._log(f"{result_text}{gale_text}", "ERROR" if result < 0 else "WARNING")
+        # Defer heavy I/O to background thread to not delay Gale execution
+        # Capture values for thread closure
+        _op = operation
+        _sess = self.session
+        _api = self.api
+        _ws_send = self._ws_send
+        _get_series_score = self._get_series_score
+        
+        def _background_save():
+            try:
+                _op.save()
+                try:
+                    _sess.current_balance = Decimal(str(_api.get_balance()))
+                except Exception:
+                    pass
+                _sess.save()
+                # WS broadcast updates
+                try:
+                    op_payload = OperationSerializer(_op).data
+                    sess_payload = TradingSessionSerializer(_sess).data
+                    _ws_send('operation_update', op_payload)
+                    _ws_send('session_update', sess_payload)
+                except Exception:
+                    pass
+                # Send Telegram notification
+                try:
+                    from .telegram_service import send_operation_notification
+                    series_wins, series_losses = _get_series_score()
+                    send_operation_notification(
+                        asset=_op.asset,
+                        direction=_op.direction,
+                        amount=float(_op.entry_value),
+                        result=op_result,
+                        profit_loss=result,
+                        gale_level=gale_level,
+                        wins=series_wins,
+                        losses=series_losses,
+                        total_profit=float(_sess.total_profit)
+                    )
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        
+        # Start background thread for I/O operations
+        bg_thread = threading.Thread(target=_background_save, daemon=True)
+        bg_thread.start()
     
     def _update_soros_progression(self, won: bool, result: float):
         """Update Soros progression"""
@@ -703,7 +997,7 @@ class MHIStrategy(BaseStrategy):
                 # Periodically check if asset is still available
                 if hasattr(self, '_last_asset_check'):
                     if time.time() - self._last_asset_check > 300:  # Check every 5 minutes
-                        new_operation_type, new_asset = self._determine_operation_type(asset)
+                        new_operation_type, new_asset = self._determine_operation_type(asset, force_refresh=True)
                         if new_asset and new_asset != asset:
                             self._log(f"Mudando de {asset} para {new_asset}", "INFO")
                             asset = new_asset
