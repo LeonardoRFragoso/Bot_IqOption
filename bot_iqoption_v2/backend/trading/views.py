@@ -529,6 +529,10 @@ def catalog_status(request):
     """
     user = request.user
     state = catalog_status_map.get(user.id, {})
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[CATALOG STATUS] user={user.id}, state={state}")
 
     # Fallback last_completed based on database if not present in memory
     last_completed = state.get('last_completed')
