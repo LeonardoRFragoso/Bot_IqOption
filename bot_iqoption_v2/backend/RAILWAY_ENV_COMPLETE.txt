@@ -1,0 +1,142 @@
+================================================================================
+VARIÁVEIS DE AMBIENTE COMPLETAS PARA RAILWAY
+================================================================================
+
+COPIE E COLE TODAS ESTAS VARIÁVEIS NO PAINEL DO RAILWAY:
+Settings > Environment Variables > Add Variable
+
+================================================================================
+1. DJANGO CORE
+================================================================================
+
+SECRET_KEY=sua-chave-secreta-super-segura-aqui-minimo-50-caracteres
+
+DEBUG=False
+
+ALLOWED_HOSTS=seu-dominio.railway.app,seu-dominio.com
+
+================================================================================
+2. DATABASE (AUTOMÁTICO - NÃO ADICIONE MANUALMENTE)
+================================================================================
+
+⚠️  IMPORTANTE: O Railway cria automaticamente DATABASE_URL quando você 
+    adiciona PostgreSQL ao projeto. NÃO adicione manualmente!
+
+Se você criou PostgreSQL e a variável não aparece:
+1. Vá para Settings > Plugins
+2. Verifique se PostgreSQL está conectado
+3. A variável DATABASE_URL deve aparecer automaticamente
+
+================================================================================
+3. MERCADO PAGO
+================================================================================
+
+MERCADOPAGO_PUBLIC_KEY=APP_USR-e80c1a1d-aed8-441e-9265-6008e06da230
+
+MERCADOPAGO_ACCESS_TOKEN=APP_USR-190324321334513-101219-9276719d370b181f22b61100e2bbf27d-175427787
+
+MERCADOPAGO_CLIENT_ID=190324321334513
+
+MERCADOPAGO_CLIENT_SECRET=AC1963p797Uhrx7pI9EXmD8b87uaXOH
+
+================================================================================
+4. WEBHOOKS E URLs
+================================================================================
+
+MERCADOPAGO_NOTIFICATION_URL=https://seu-dominio.railway.app/api/billing/webhook/
+
+FRONTEND_URL=https://seu-frontend.vercel.app
+
+CORS_ALLOWED_ORIGINS=https://seu-frontend.vercel.app,https://www.seu-frontend.vercel.app
+
+================================================================================
+5. ASSINATURA
+================================================================================
+
+SUBSCRIPTION_PRICE=19.90
+
+PLATFORM_ADMIN_EMAIL=seu-email@example.com
+
+================================================================================
+RESUMO DO QUE ADICIONAR NO RAILWAY
+================================================================================
+
+Total de variáveis a adicionar: 11
+
+1. SECRET_KEY
+2. DEBUG
+3. ALLOWED_HOSTS
+4. MERCADOPAGO_PUBLIC_KEY
+5. MERCADOPAGO_ACCESS_TOKEN
+6. MERCADOPAGO_CLIENT_ID
+7. MERCADOPAGO_CLIENT_SECRET
+8. MERCADOPAGO_NOTIFICATION_URL
+9. FRONTEND_URL
+10. CORS_ALLOWED_ORIGINS
+11. SUBSCRIPTION_PRICE
+12. PLATFORM_ADMIN_EMAIL
+
+⚠️  DATABASE_URL é criada AUTOMATICAMENTE pelo Railway
+
+================================================================================
+PASSO A PASSO NO RAILWAY
+================================================================================
+
+1. Acesse https://railway.app
+2. Selecione o projeto "bot-iqoption-backend"
+3. Clique em "Settings"
+4. Clique em "Environment Variables"
+5. Para cada variável acima:
+   - Clique em "Add Variable"
+   - Cole o nome (ex: SECRET_KEY)
+   - Cole o valor
+   - Pressione Enter
+6. Após adicionar todas:
+   - Vá para "Deployments"
+   - Clique no último deployment
+   - Clique em "Redeploy"
+
+================================================================================
+VERIFICAÇÃO
+================================================================================
+
+Após o redeploy, verifique os logs:
+- Vá para "Logs"
+- Procure por: "Listening on TCP address 0.0.0.0:PORT"
+- Se vir isso, o backend está rodando! ✅
+
+Se vir erros:
+- "ModuleNotFoundError: No module named 'pkg_resources'" 
+  → Aguarde o rebuild completar (pode levar 2-3 minutos)
+  
+- "OperationalError: could not connect to server"
+  → Verifique se PostgreSQL foi adicionado e DATABASE_URL existe
+
+================================================================================
+VALORES RECOMENDADOS
+================================================================================
+
+Para ALLOWED_HOSTS (substitua seu-dominio):
+- Se usar Railway: seu-dominio.railway.app
+- Se usar domínio customizado: seu-dominio.com,seu-dominio.railway.app
+
+Para CORS_ALLOWED_ORIGINS (substitua seu-frontend):
+- Se usar Vercel: https://seu-frontend.vercel.app
+- Se usar domínio customizado: https://seu-dominio.com
+
+Para MERCADOPAGO_NOTIFICATION_URL:
+- Use sempre HTTPS: https://seu-dominio.railway.app/api/billing/webhook/
+
+================================================================================
+GERAR SECRET_KEY
+================================================================================
+
+Se precisar gerar uma nova SECRET_KEY:
+
+Opção 1 (Local):
+python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'
+
+Opção 2 (Online):
+https://djecrety.ir/
+
+================================================================================

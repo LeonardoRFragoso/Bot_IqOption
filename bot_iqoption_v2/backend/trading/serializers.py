@@ -182,7 +182,8 @@ class CatalogAssetsSerializer(serializers.Serializer):
     
     account_type = serializers.ChoiceField(
         choices=[('PRACTICE', 'Demo'), ('REAL', 'Real')],
-        default='REAL'
+        default='REAL',
+        required=False
     )
     
     strategies = serializers.MultipleChoiceField(
@@ -192,7 +193,8 @@ class CatalogAssetsSerializer(serializers.Serializer):
             ('torres_gemeas', 'Torres Gêmeas'),
             ('mhi_m5', 'MHI M5'),
         ],
-        default=['mhi', 'torres_gemeas', 'mhi_m5']
+        default=['mhi', 'torres_gemeas', 'mhi_m5'],
+        required=False
     )
 
 

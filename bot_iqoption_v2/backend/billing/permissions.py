@@ -5,6 +5,7 @@ from django.conf import settings
 class HasActiveSubscription(BasePermission):
     """Allows access only to users with an active subscription.
     The configured platform admin email bypasses this check.
+    In development mode, allows all authenticated users.
     """
 
     message = 'Assinatura ativa requerida para utilizar esta funcionalidade.'
@@ -15,6 +16,9 @@ class HasActiveSubscription(BasePermission):
             return False
         # Admin bypass
         if getattr(user, 'email', None) == getattr(settings, 'PLATFORM_ADMIN_EMAIL', None):
+            return True
+        # Development mode bypass
+        if getattr(settings, 'DEBUG', False):
             return True
         # Subscription check
         sub = getattr(user, 'subscription', None)

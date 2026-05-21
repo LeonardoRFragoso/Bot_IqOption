@@ -57,13 +57,16 @@ const AssetCatalog: React.FC = () => {
     // Poll while running
     if (!runningCatalog) return;
     
+    // Check status immediately
+    checkCatalogStatus();
+    
     const interval = setInterval(async () => {
       const stillRunning = await checkCatalogStatus();
       if (!stillRunning) {
         // Cataloging finished, refresh data
         refetch();
       }
-    }, 2000);
+    }, 1000); // Poll every 1 second for faster updates
     
     return () => clearInterval(interval);
   }, [runningCatalog, checkCatalogStatus, refetch]);
@@ -74,10 +77,12 @@ const AssetCatalog: React.FC = () => {
     try {
       await runCatalog();
       setCatalogProgress('Catalogação em andamento...');
+      // Keep polling to monitor status - don't set runningCatalog to false here
+      // The polling effect will handle status updates
     } catch (err) {
       console.error('Erro ao executar catalogação:', err);
       setRunningCatalog(false);
-      setCatalogProgress('');
+      setCatalogProgress('Erro ao iniciar catalogação');
     }
   };
 

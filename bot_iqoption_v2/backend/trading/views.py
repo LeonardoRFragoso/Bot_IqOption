@@ -404,6 +404,11 @@ def catalog_assets(request):
     """Catalog assets for strategies"""
     
     serializer = CatalogAssetsSerializer(data=request.data)
+    if not serializer.is_valid():
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Catalog serializer validation error: {serializer.errors}, data: {request.data}")
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     serializer.is_valid(raise_exception=True)
     
     user = request.user

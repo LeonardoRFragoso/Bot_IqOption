@@ -1,0 +1,14 @@
+{
+  "buildCommand": "npm run build:prod",
+  "outputDirectory": "dist",
+  "env": {
+    "VITE_API_BASE_URL": "@vite_api_base_url",
+    "VITE_WS_BASE_URL": "@vite_ws_base_url"
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
